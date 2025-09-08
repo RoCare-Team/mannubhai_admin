@@ -22,7 +22,7 @@ export default function EditBlogPage() {
 
   const [formData, setFormData] = useState({
     blog_title: '',
-    blog_description: '',
+    blog_content_text: '',
     blog_content_text:'',
     blog_keywords: '',
     blog_url: '',
@@ -54,7 +54,7 @@ export default function EditBlogPage() {
         const blogData = docSnap.data();
         const updatedFormData = {
           blog_title: blogData.blog_title || '',
-          blog_description: blogData.blog_description || '',
+          blog_content_text: blogData.blog_content_text || '',
           blog_content_text:blogData.blog_content_text || '',
           blog_keywords: blogData.blog_keywords || '',
           blog_url: blogData.blog_url || '',
@@ -144,7 +144,7 @@ export default function EditBlogPage() {
       return;
     }
     
-    if (!formData.blog_description.trim()) {
+    if (!formData.blog_content_text.trim()) {
       toast.error('Blog content is required');
       return;
     }
@@ -164,7 +164,7 @@ export default function EditBlogPage() {
 
       console.log('Updating blog with data:', {
         ...blogData,
-        blog_description: `${blogData.blog_description.slice(0, 100)}...` // Log only first 100 chars
+        blog_content_text: `${blogData.blog_content_text.slice(0, 100)}...` // Log only first 100 chars
       });
 
       // Update in Firestore
@@ -183,7 +183,7 @@ export default function EditBlogPage() {
   };
 
   const handleAutoSave = () => {
-    if (formData.blog_title.trim() || formData.blog_description.trim()) {
+    if (formData.blog_title.trim() || formData.blog_content_text.trim()) {
       // Auto-save logic here if needed
       console.log('Auto-saving content...');
     }
@@ -359,7 +359,7 @@ export default function EditBlogPage() {
               </div>
 
               <div>
-                <label htmlFor="blog_description" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="blog_content_text" className="block text-sm font-medium text-gray-700 mb-2">
                   Blog Content * 
                   <span className="text-xs text-gray-500 ml-2">
                     ({formData.blog_content_text ? formData.blog_content_text.length : 0} characters)
