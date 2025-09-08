@@ -224,7 +224,7 @@ export default function EditUser() {
                       <p className="mt-1 text-sm text-red-600">{errors.email}</p>
                     )}
                     <p className="mt-1 text-xs text-gray-500">
-                      Note: Changing email here won't update Firebase Auth email
+                        Note: Changing email here won&apos;t update Firebase Auth email
                     </p>
                   </div>
 
