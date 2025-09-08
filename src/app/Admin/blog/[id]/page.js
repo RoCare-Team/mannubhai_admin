@@ -15,7 +15,7 @@ export default function EditBlogPage() {
   const [categories, setCategories] = useState([]);
   const [imageUpload, setImageUpload] = useState(null);
   const [imageUploading, setImageUploading] = useState(false);
-  const [editorKey, setEditorKey] = useState(0); // Force re-render of editor when content loads
+  const [editorKey, setEditorKey] = useState(0); 
   const router = useRouter();
   const params = useParams();
   const blogId = params.id;
@@ -23,6 +23,7 @@ export default function EditBlogPage() {
   const [formData, setFormData] = useState({
     blog_title: '',
     blog_description: '',
+    blog_content_text:'',
     blog_keywords: '',
     blog_url: '',
     blog_cat_id: '',
@@ -54,6 +55,7 @@ export default function EditBlogPage() {
         const updatedFormData = {
           blog_title: blogData.blog_title || '',
           blog_description: blogData.blog_description || '',
+          blog_content_text:blogData.blog_content_text || '',
           blog_keywords: blogData.blog_keywords || '',
           blog_url: blogData.blog_url || '',
           blog_cat_id: blogData.blog_cat_id || '',
@@ -110,7 +112,7 @@ export default function EditBlogPage() {
     console.log('Editor content changed:', content.length, 'characters');
     setFormData(prev => ({
       ...prev,
-      blog_description: content
+      blog_content_text: content
     }));
   };
 
@@ -360,12 +362,12 @@ export default function EditBlogPage() {
                 <label htmlFor="blog_description" className="block text-sm font-medium text-gray-700 mb-2">
                   Blog Content * 
                   <span className="text-xs text-gray-500 ml-2">
-                    ({formData.blog_description ? formData.blog_description.length : 0} characters)
+                    ({formData.blog_content_text ? formData.blog_content_text.length : 0} characters)
                   </span>
                 </label>
                 <BlogEditor
                   key={editorKey} // Force re-render when content loads
-                  content={formData.blog_description} 
+                  content={formData.blog_content_text} 
                   onChange={handleEditorChange} 
                 />
               </div>

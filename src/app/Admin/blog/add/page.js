@@ -41,7 +41,7 @@ export default function AddBlogPage() {
 
   const [formData, setFormData] = useState({
     blog_title: '',
-    blog_description: '',
+    blog_content_text: '',
     blog_keywords: '',
     blog_url: '',
     blog_cat_id: '',
@@ -90,9 +90,9 @@ export default function AddBlogPage() {
     }
 
     // Auto-generate meta description from content if not set
-    if (formData.blog_description && !formData.meta_description) {
+    if (formData.blog_content_text && !formData.meta_description) {
       // Strip HTML tags and get plain text
-      const plainText = formData.blog_description.replace(/<[^>]*>/g, '');
+      const plainText = formData.blog_content_text.replace(/<[^>]*>/g, '');
       if (plainText.length > 10) {
         const description = plainText.length > 160 
           ? plainText.substring(0, 157) + '...' 
@@ -104,7 +104,7 @@ export default function AddBlogPage() {
         }));
       }
     }
-  }, [formData.blog_title, formData.blog_description]);
+  }, [formData.blog_title, formData.blog_content_text]);
 
   const fetchCategories = async () => {
     try {
@@ -141,7 +141,7 @@ export default function AddBlogPage() {
     console.log('Editor content changed:', content.length, 'characters');
     setFormData(prev => ({
       ...prev,
-      blog_description: content,
+      blog_content_text: content,
       updated_at: new Date().toISOString()
     }));
     
@@ -178,7 +178,7 @@ export default function AddBlogPage() {
       return;
     }
     
-    if (!formData.blog_description.trim()) {
+    if (!formData.blog_content_text.trim()) {
       toast.error("Blog content is required");
       return;
     }
@@ -189,7 +189,7 @@ export default function AddBlogPage() {
     }
 
     // Validate content length
-    const plainTextContent = formData.blog_description.replace(/<[^>]*>/g, '');
+    const plainTextContent = formData.blog_content_text.replace(/<[^>]*>/g, '');
     if (plainTextContent.length < 100) {
       toast.error("Blog content should be at least 100 characters long");
       return;
@@ -235,7 +235,7 @@ export default function AddBlogPage() {
 
       console.log('Saving blog with data:', {
         ...blogData,
-        blog_description: `${blogData.blog_description.slice(0, 100)}...` // Log only first 100 chars
+        blog_content_text: `${blogData.blog_content_text.slice(0, 100)}...` // Log only first 100 chars
       });
 
       // Step 3: save blog (random Firestore ID + numeric field inside)
@@ -279,7 +279,7 @@ export default function AddBlogPage() {
   };
 
   const getWordCount = () => {
-    const plainText = formData.blog_description.replace(/<[^>]*>/g, '');
+    const plainText = formData.blog_content_text.replace(/<[^>]*>/g, '');
     return plainText.split(/\s+/).filter(word => word.length > 0).length;
   };
 
@@ -319,7 +319,7 @@ export default function AddBlogPage() {
                   }`}></div>
                   <span className="text-sm text-gray-600">{autoSaveStatus}</span>
                 </div>
-                {formData.blog_description && (
+                {formData.blog_content_text && (
                   <div className="text-sm text-gray-600">
                     {getWordCount()} words • {getReadingTime()} min read
                   </div>
@@ -468,17 +468,17 @@ export default function AddBlogPage() {
               </div>
 
               <div>
-                <label htmlFor="blog_description" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="blog_content_text" className="block text-sm font-medium text-gray-700 mb-2">
                   Blog Content *
                   <span className="text-xs text-gray-500 ml-2">
-                    ({formData.blog_description ? formData.blog_description.length : 0} characters)
+                    ({formData.blog_content_text ? formData.blog_content_text.length : 0} characters)
                   </span>
                 </label>
                 <BlogEditor 
-                  content={formData.blog_description} 
+                  content={formData.blog_content_text} 
                   onChange={handleEditorChange} 
                 />
-                {formData.blog_description && (
+                {formData.blog_content_text && (
                   <div className="mt-2 text-xs text-gray-500">
                     Word count: {getWordCount()} | Estimated reading time: {getReadingTime()} minutes
                   </div>
