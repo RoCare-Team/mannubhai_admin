@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import './../../app/globals.css';
 import AdminSidebar from '../Compoents/Adminsidebar';
 import AdminNavbar from '../Compoents/AdminNavbar';
-import { useAuth } from '../hooks/useAuth'; // Adjust path as needed
+import { useAuth } from '../hooks/useAuth'; 
 
 // Protected Route Component using Firebase auth
 function ProtectedRoute({ children }) {
@@ -20,7 +20,7 @@ function ProtectedRoute({ children }) {
         return;
       }
       
-      if (!hasAnyRole(['admin', 'editor'])) {
+      if (!hasAnyRole(['admin', 'editor','viewer'])) {
         // User is logged in but doesn't have admin or editor role
         router.push('/unauthorized');
         return;
@@ -42,7 +42,7 @@ function ProtectedRoute({ children }) {
 
   // Don't render content if user is not authenticated or doesn't have proper role
   // The useEffect will handle the redirect
-  if (!user || !hasAnyRole(['admin', 'editor'])) {
+  if (!user || !hasAnyRole(['admin', 'editor','viewer'])) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="text-center">

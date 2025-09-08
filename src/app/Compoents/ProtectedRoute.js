@@ -1,13 +1,13 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 
 export default function ProtectedRoute({ 
   children, 
-  requiredRoles = ['admin', 'editor'],
+  requiredRoles = ['admin', 'editor', 'viewer'],
   redirectTo = '/login',
   allowUnauthenticated = false 
 }) {
@@ -25,23 +25,31 @@ export default function ProtectedRoute({
         setError(null);
 
         if (firebaseUser) {
-          // User is signed in
           setUser(firebaseUser);
-          
+
           try {
-            // Get user data from Firestore
             const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-            
+
             if (userDoc.exists()) {
               const userInfo = userDoc.data();
               setUserData(userInfo);
-              
-              // Store in localStorage for quick access
+
+              // Store quick info in localStorage
               localStorage.setItem('userRole', userInfo.role);
               localStorage.setItem('userName', userInfo.name || 'User');
               localStorage.setItem('userId', firebaseUser.uid);
-              
-              // Check if user has required role
+
+              // ✅ Check account status
+              if (userInfo.status !== 'active') {
+                setAuthorized(false);
+                setError('Your account is not active. Please contact the administrator.');
+                await signOut(auth);
+                setUser(null);
+                setUserData(null);
+                return;
+              }
+
+              // ✅ Check roles
               if (requiredRoles.includes(userInfo.role)) {
                 setAuthorized(true);
               } else {
@@ -49,12 +57,9 @@ export default function ProtectedRoute({
                 setError(`Access denied. Required roles: ${requiredRoles.join(', ')}. Your role: ${userInfo.role}`);
               }
             } else {
-              // User exists in Auth but not in Firestore
               setError('User profile not found. Please contact administrator.');
               setAuthorized(false);
-              
-              // Sign out user since they don't have a profile
-              await auth.signOut();
+              await signOut(auth);
               setUser(null);
               setUserData(null);
             }
@@ -64,16 +69,15 @@ export default function ProtectedRoute({
             setAuthorized(false);
           }
         } else {
-          // User is signed out
+          // Not signed in
           setUser(null);
           setUserData(null);
           setAuthorized(allowUnauthenticated);
-          
-          // Clear localStorage
+
           localStorage.removeItem('userRole');
           localStorage.removeItem('userName');
           localStorage.removeItem('userId');
-          
+
           if (!allowUnauthenticated) {
             setError('Authentication required');
           }
@@ -87,21 +91,19 @@ export default function ProtectedRoute({
       }
     });
 
-    // Cleanup subscription on unmount
     return () => unsubscribe();
   }, [requiredRoles, allowUnauthenticated]);
 
-  // Handle redirects
+  // Redirect logic
   useEffect(() => {
     if (!loading && !authorized && !allowUnauthenticated) {
-      // Small delay to prevent flash of unauthorized content
       const redirectTimer = setTimeout(() => {
         if (!user) {
-          // Not authenticated, redirect to login
           router.push(redirectTo);
+        } else if (userData && userData.status !== 'active') {
+          router.push('/unauthorized'); // inactive account
         } else if (userData && !requiredRoles.includes(userData.role)) {
-          // Authenticated but insufficient permissions
-          router.push('/unauthorized');
+          router.push('/unauthorized'); // wrong role
         }
       }, 100);
 
@@ -109,7 +111,7 @@ export default function ProtectedRoute({
     }
   }, [loading, authorized, allowUnauthenticated, user, userData, requiredRoles, redirectTo, router]);
 
-  // Loading state
+  // Loading screen
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -133,26 +135,18 @@ export default function ProtectedRoute({
           </div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Error</h2>
           <p className="text-gray-600 mb-6">{error}</p>
-          <div className="space-y-3">
-            <button 
-              onClick={() => router.push('/login')}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200"
-            >
-              Go to Login
-            </button>
-            <button 
-              onClick={() => window.location.reload()}
-              className="w-full px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 transition-colors duration-200"
-            >
-              Try Again
-            </button>
-          </div>
+          <button 
+            onClick={() => router.push('/login')}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200"
+          >
+            Go to Login
+          </button>
         </div>
       </div>
     );
   }
 
-  // Unauthorized state (authenticated but insufficient permissions)
+  // Unauthorized
   if (user && userData && !authorized && !allowUnauthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -164,91 +158,33 @@ export default function ProtectedRoute({
           </div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h2>
           <p className="text-gray-600 mb-2">
-            You dont have permission to access this page.
+            You don’t have permission to access this page.
           </p>
           <p className="text-sm text-gray-500 mb-6">
             Required roles: {requiredRoles.join(', ')}
             <br />
             Your role: {userData.role}
           </p>
-          <div className="space-y-3">
-            <button 
-              onClick={() => router.push('/dashboard')}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200"
-            >
-              Go to Dashboard
-            </button>
-            <button 
-              onClick={async () => {
-                await auth.signOut();
-                router.push('/login');
-              }}
-              className="w-full px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 transition-colors duration-200"
-            >
-              Sign Out
-            </button>
-          </div>
+          <button 
+            onClick={async () => {
+              await signOut(auth);
+              router.push('/login');
+            }}
+            className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 transition-colors duration-200"
+          >
+            Sign Out
+          </button>
         </div>
       </div>
     );
   }
 
-  // Render children if authorized or if unauthenticated access is allowed
+  // If authorized
   if (authorized || allowUnauthenticated) {
     return <>{children}</>;
   }
 
-  // Default fallback (shouldn't reach here, but just in case)
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
-        <p className="mt-2 text-gray-600">Loading...</p>
-      </div>
-    </div>
-  );
+  return null;
 }
 
-// Helper hook to use authentication data in components
-export function useAuth() {
-  const [user, setUser] = useState(null);
-  const [userData, setUserData] = useState(null);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-          if (userDoc.exists()) {
-            setUser(firebaseUser);
-            setUserData(userDoc.data());
-          }
-        } catch (error) {
-          console.error('Error fetching user data:', error);
-        }
-      } else {
-        setUser(null);
-        setUserData(null);
-      }
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  const hasRole = (role) => userData?.role === role;
-  const hasAnyRole = (roles) => roles.includes(userData?.role);
-
-  return {
-    user,
-    userData,
-    loading,
-    hasRole,
-    hasAnyRole,
-    isAdmin: userData?.role === 'admin',
-    isEditor: userData?.role === 'editor',
-    isViewer: userData?.role === 'viewer',
-    signOut: () => auth.signOut()
-  };
-}
