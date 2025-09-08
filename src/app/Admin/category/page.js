@@ -455,7 +455,7 @@ const CategoryManagement = () => {
             <div className="text-center">
               <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Category</h3>
               <p className="text-sm text-gray-500 mb-6">
-                Are you sure you want to delete "{deleteConfirmation.category_name}"? This action cannot be undone.
+                 Are you sure you want to delete &quot;{deleteConfirmation.category_name}&quot;? This action cannot be undone.
               </p>
               <div className="flex space-x-3">
                 <button
