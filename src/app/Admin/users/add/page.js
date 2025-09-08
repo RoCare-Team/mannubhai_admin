@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, setDoc, serverTimestamp,doc } from 'firebase/firestore';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth, db } from '../../../firebase/config';
 import { useRouter } from 'next/navigation';
@@ -13,7 +13,8 @@ export default function AddUser() {
     email: '',
     password: '',
     confirmPassword: '',
-    role: 'viewer'
+    role: 'viewer',
+    status: 'inactive'
   });
   const [errors, setErrors] = useState({});
   const router = useRouter();
@@ -76,14 +77,17 @@ export default function AddUser() {
       );
 
       // Add user document to Firestore
-      await addDoc(collection(db, 'users'), {
-        id: userCredential.user.uid,
-        name: formData.name.trim(),
-        email: formData.email.trim(),
-        role: formData.role,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
+  // Add user document to Firestore
+await setDoc(doc(db, 'users', userCredential.user.uid), {
+  id: userCredential.user.uid,
+  name: formData.name.trim(),
+  email: formData.email.trim(),
+  role: formData.role,
+  status:formData.status,
+  createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp()
+});
+
 
       showToast('User created successfully!', 'success');
       setTimeout(() => {

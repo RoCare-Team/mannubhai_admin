@@ -48,7 +48,7 @@ export default function EditUser() {
       } else {
         toast.error('User not found');
         setTimeout(() => {
-          router.push('/admin/users');
+          router.push('/Admin/users');
         }, 1500);
       }
     } catch (error) {
@@ -107,7 +107,7 @@ export default function EditUser() {
 
       toast.success('User updated successfully!');
       setTimeout(() => {
-        router.push('/admin/users');
+        router.push('/Admin/users');
       }, 1500);
     } catch (error) {
       console.error('Error updating user:', error);
@@ -254,7 +254,7 @@ export default function EditUser() {
                   <div className="flex justify-end space-x-4 pt-4 border-t border-gray-200">
                     <button
                       type="button"
-                      onClick={() => router.push('/admin/users')}
+                      onClick={() => router.push('/Admin/users')}
                       className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                     >
                       Cancel

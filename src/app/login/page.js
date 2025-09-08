@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/config'; 
 import { useRouter } from 'next/navigation';
@@ -17,10 +17,17 @@ export default function Login() {
   // Use the auth hook
   const { user, userData, loading: authLoading } = useAuth();
 
+  // Define allowed roles
+  const allowedRoles = ['admin', 'editor', 'viewer'];
+
   // Redirect if already logged in and has proper role
   useEffect(() => {
     if (!authLoading && user && userData) {
-      if (userData.role === 'admin' || userData.role === 'editor') {
+      console.log('User role:', userData.role);
+      console.log('User status:', userData.status);
+      
+      if (allowedRoles.includes(userData.role) && userData.status === 'active') {
+        console.log('Redirecting to Admin page');
         router.push('/Admin');
       }
     }
@@ -35,32 +42,40 @@ export default function Login() {
       // Sign in with Firebase Auth
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
+      console.log('Firebase auth successful, UID:', user.uid);
 
-      // Get user role from Firestore
+      // Get user profile from Firestore
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       
       if (userDoc.exists()) {
         const userData = userDoc.data();
+        console.log('Firestore user data:', userData);
         
-        // Check if user has admin access
-        if (userData.role === 'admin' || userData.role === 'editor') {
-          // Store user data in localStorage for role-based access
+        // 🔑 Check status first
+        if (allowedRoles.includes(userData.role) && userData.status === 'active') {
+          console.log('Login successful, role:', userData.role);
           localStorage.setItem('userRole', userData.role);
           localStorage.setItem('userName', userData.name || '');
+          localStorage.setItem('userId', user.uid);
           
-          router.push('/Admin');
+          router.push('/Admin'); 
+        } else if (userData.status !== 'active') {
+          console.log('Account inactive');
+          setError('Your account is inactive. Contact admin.');
+          await signOut(auth);
         } else {
-          setError('Access denied. Admin or Editor privileges required.');
-          await auth.signOut();
+          console.log('Access denied, role:', userData.role);
+          setError('Access denied. You do not have permission.');
+          await signOut(auth);
         }
       } else {
+        console.log('User profile not found');
         setError('User profile not found.');
-        await auth.signOut();
+        await signOut(auth);
       }
     } catch (error) {
       console.error('Login error:', error);
       
-      // More user-friendly error messages
       let errorMessage = error.message;
       if (error.code === 'auth/user-not-found') {
         errorMessage = 'No account found with this email address.';
@@ -196,7 +211,7 @@ export default function Login() {
                     ) : (
                       <svg className="h-5 w-5 text-white/50 hover:text-white/70 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268-2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                       </svg>
                     )}
                   </button>

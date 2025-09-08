@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '../hooks/useAuth';
 
 export default function AdminDashboard() {
-  const { user, userData, loading: authLoading, isAdmin } = useAuth();
+  const { user, userData, loading: authLoading, isAdmin, isEditor, isViewer } = useAuth();
   const router = useRouter();
   
   const [stats, setStats] = useState({
@@ -42,6 +42,8 @@ export default function AdminDashboard() {
     { name: 'states_cities', displayName: 'States & Cities', color: 'red' }
   ];
 
+
+  
   // Authentication check
   useEffect(() => {
     if (!authLoading) {
@@ -49,19 +51,21 @@ export default function AdminDashboard() {
         router.push('/login');
         return;
       }
-      
-      if (!isAdmin) {
+
+      // ✅ Allow admin, editor, viewer
+      if (!(isAdmin || isEditor || isViewer)) {
         router.push('/unauthorized');
         return;
       }
     }
-  }, [user, userData, authLoading, isAdmin, router]);
+  }, [user, userData, authLoading, isAdmin, isEditor, isViewer, router]);
 
+  // Fetch data when user is authenticated and has proper role
   useEffect(() => {
-    if (user && isAdmin) {
+    if (user && (isAdmin || isEditor || isViewer)) {
       fetchDashboardData();
     }
-  }, [user, isAdmin]);
+  }, [user, isAdmin, isEditor, isViewer]);
 
   const fetchCollectionCounts = async () => {
     const newCounts = {};
@@ -90,48 +94,59 @@ export default function AdminDashboard() {
       
       console.log('Attempting to fetch users from Firestore...');
       
-      // Fetch users data
-      const usersQuery = query(
-        collection(db, 'users'),
-        orderBy('createdAt', 'desc')
-      );
-      
-      const usersSnapshot = await getDocs(usersQuery);
-      const users = [];
-      
+      // Fetch users data (only if admin)
       let adminCount = 0;
       let editorCount = 0;
       let viewerCount = 0;
+      let users = [];
 
-      usersSnapshot.forEach((doc) => {
-        const userData = { id: doc.id, ...doc.data() };
-        users.push(userData);
+      if (isAdmin) {
+        const usersQuery = query(
+          collection(db, 'users'),
+          orderBy('createdAt', 'desc')
+        );
         
-        switch (userData.role) {
-          case 'admin':
-            adminCount++;
-            break;
-          case 'editor':
-            editorCount++;
-            break;
-          case 'viewer':
-            viewerCount++;
-            break;
-        }
-      });
+        const usersSnapshot = await getDocs(usersQuery);
+        
+        usersSnapshot.forEach((doc) => {
+          const userData = { id: doc.id, ...doc.data() };
+          users.push(userData);
+          
+          switch (userData.role) {
+            case 'admin':
+              adminCount++;
+              break;
+            case 'editor':
+              editorCount++;
+              break;
+            case 'viewer':
+              viewerCount++;
+              break;
+          }
+        });
 
-      console.log(`Found ${users.length} users in Firestore`);
+        console.log(`Found ${users.length} users in Firestore`);
 
-      setStats({
-        totalUsers: users.length,
-        adminUsers: adminCount,
-        editorUsers: editorCount,
-        viewerUsers: viewerCount
-      });
+        setStats({
+          totalUsers: users.length,
+          adminUsers: adminCount,
+          editorUsers: editorCount,
+          viewerUsers: viewerCount
+        });
 
-      setRecentUsers(users.slice(0, 5));
+        setRecentUsers(users.slice(0, 5));
+      } else {
+        // For non-admin users, show limited or no user data
+        setStats({
+          totalUsers: 0,
+          adminUsers: 0,
+          editorUsers: 0,
+          viewerUsers: 0
+        });
+        setRecentUsers([]);
+      }
 
-      // Fetch collection counts
+      // Fetch collection counts (available to all roles)
       await fetchCollectionCounts();
 
     } catch (error) {
@@ -174,7 +189,7 @@ export default function AdminDashboard() {
     );
   }
 
-  if (!user || !isAdmin) {
+  if (!user || !(isAdmin || isEditor || isViewer)) {
     return (
       <div className="min-h-screen flex justify-center items-center bg-gray-50">
         <div className="text-center">
@@ -268,7 +283,7 @@ export default function AdminDashboard() {
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Dashboard Overview</h1>
-          <p className="text-gray-600 mt-2">Welcome back, {userData?.name || 'Admin'}!</p>
+          <p className="text-gray-600 mt-2">Welcome back, {userData?.name || 'User'}! ({userData?.role})</p>
         </div>
         <button
           onClick={handleRefresh}
@@ -319,53 +334,55 @@ export default function AdminDashboard() {
         </div>
       ) : (
         <>
-          {/* User Stats Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <StatCard
-              title="Total Users"
-              value={stats.totalUsers}
-              color="blue"
-              icon={
-                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
-                </svg>
-              }
-            />
-            
-            <StatCard
-              title="Admins"
-              value={stats.adminUsers}
-              color="red"
-              icon={
-                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-              }
-            />
-            
-            <StatCard
-              title="Editors"
-              value={stats.editorUsers}
-              color="yellow"
-              icon={
-                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              }
-            />
-            
-            <StatCard
-              title="Viewers"
-              value={stats.viewerUsers}
-              color="green"
-              icon={
-                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                </svg>
-              }
-            />
-          </div>
+          {/* User Stats Grid (only show for admins) */}
+          {isAdmin && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              <StatCard
+                title="Total Users"
+                value={stats.totalUsers}
+                color="blue"
+                icon={
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                  </svg>
+                }
+              />
+              
+              <StatCard
+                title="Admins"
+                value={stats.adminUsers}
+                color="red"
+                icon={
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                }
+              />
+              
+              <StatCard
+                title="Editors"
+                value={stats.editorUsers}
+                color="yellow"
+                icon={
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                }
+              />
+              
+              <StatCard
+                title="Viewers"
+                value={stats.viewerUsers}
+                color="green"
+                icon={
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                }
+              />
+            </div>
+          )}
 
           {/* Collection Counts Section */}
           <div className="mb-8">
@@ -413,133 +430,138 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* Recent Users Table */}
-          <div className="bg-white shadow rounded-lg mb-8">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h2 className="text-lg font-medium text-gray-900">Recent Users</h2>
-                  <p className="text-sm text-gray-500">Latest user registrations</p>
+          {/* Recent Users Table (only show for admins) */}
+          {isAdmin && (
+            <div className="bg-white shadow rounded-lg mb-8">
+              <div className="px-6 py-4 border-b border-gray-200">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h2 className="text-lg font-medium text-gray-900">Recent Users</h2>
+                    <p className="text-sm text-gray-500">Latest user registrations</p>
+                  </div>
+                  {recentUsers.length > 0 && (
+                    <Link
+                      href="/Admin/users"
+                      className="text-sm text-blue-600 hover:text-blue-900"
+                    >
+                      View all users →
+                    </Link>
+                  )}
                 </div>
-                {recentUsers.length > 0 && (
-                  <Link
-                    href="/Admin/users"
-                    className="text-sm text-blue-600 hover:text-blue-900"
-                  >
-                    View all users →
-                  </Link>
-                )}
               </div>
-            </div>
-            
-            {recentUsers.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        User
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Role
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Created
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {recentUsers.map((user) => (
-                      <tr key={user.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center">
-                            <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
-                              <span className="text-sm font-medium text-gray-700">
-                                {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
-                              </span>
-                            </div>
-                            <div className="ml-4">
-                              <div className="text-sm font-medium text-gray-900">
-                                {user.name || 'No name'}
-                              </div>
-                              <div className="text-sm text-gray-500">
-                                {user.email}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getRoleBadgeColor(user.role)}`}>
-                            {user.role}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {formatDate(user.createdAt)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <button 
-                            onClick={() => handleViewUser(user.id)}
-                            className="text-blue-600 hover:text-blue-900 mr-3"
-                          >
-                            View
-                          </button>
-                          <button 
-                            onClick={() => handleEditUser(user.id)}
-                            className="text-green-600 hover:text-green-900"
-                          >
-                            Edit
-                          </button>
-                        </td>
+              
+              {recentUsers.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          User
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Role
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Created
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Actions
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="text-center py-12">
-                <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
-                </svg>
-                <h3 className="mt-2 text-sm font-medium text-gray-900">No users yet</h3>
-                <p className="mt-1 text-sm text-gray-500">Get started by adding your first user.</p>
-                <div className="mt-6">
-                  <Link
-                    href="/Admin/users/add"
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-                  >
-                    Add First User
-                  </Link>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {recentUsers.map((user) => (
+                        <tr key={user.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
+                                <span className="text-sm font-medium text-gray-700">
+                                  {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                                </span>
+                              </div>
+                              <div className="ml-4">
+                                <div className="text-sm font-medium text-gray-900">
+                                  {user.name || 'No name'}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                  {user.email}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getRoleBadgeColor(user.role)}`}>
+                              {user.role}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {formatDate(user.createdAt)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <button 
+                              onClick={() => handleViewUser(user.id)}
+                              className="text-blue-600 hover:text-blue-900 mr-3"
+                            >
+                              View
+                            </button>
+                            <button 
+                              onClick={() => handleEditUser(user.id)}
+                              className="text-green-600 hover:text-green-900"
+                            >
+                              Edit
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              </div>
-            )}
-          </div>
+              ) : (
+                <div className="text-center py-12">
+                  <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                  </svg>
+                  <h3 className="mt-2 text-sm font-medium text-gray-900">No users yet</h3>
+                  <p className="mt-1 text-sm text-gray-500">Get started by adding your first user.</p>
+                  <div className="mt-6">
+                    <Link
+                      href="/Admin/users/add"
+                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+                    >
+                      Add First User
+                    </Link>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Quick Actions */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white shadow rounded-lg p-6 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-blue-500 rounded-md flex items-center justify-center">
-                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-                    </svg>
+            {/* Add New User (only show for admins) */}
+            {isAdmin && (
+              <div className="bg-white shadow rounded-lg p-6 hover:shadow-md transition-shadow duration-200">
+                <div className="flex items-center">
+                  <div className="flex-shrink-0">
+                    <div className="w-8 h-8 bg-blue-500 rounded-md flex items-center justify-center">
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                      </svg>
+                    </div>
+                  </div>
+                  <div className="ml-5">
+                    <h3 className="text-lg font-medium text-gray-900">Add New User</h3>
+                    <p className="text-sm text-gray-500">Create a new user account</p>
+                    <Link
+                      href="/Admin/users/add"
+                      className="mt-3 inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 transition-colors duration-200"
+                    >
+                      Add User
+                    </Link>
                   </div>
                 </div>
-                <div className="ml-5">
-                  <h3 className="text-lg font-medium text-gray-900">Add New User</h3>
-                  <p className="text-sm text-gray-500">Create a new user account</p>
-                  <Link
-                    href="/Admin/users/add"
-                    className="mt-3 inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 transition-colors duration-200"
-                  >
-                    Add User
-                  </Link>
-                </div>
               </div>
-            </div>
+            )}
 
             <div className="bg-white shadow rounded-lg p-6 hover:shadow-md transition-shadow duration-200">
               <div className="flex items-center">
