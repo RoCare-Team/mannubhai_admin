@@ -7,6 +7,7 @@ import { db } from '../../firebase/config';
 export default function BlogPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [blogs, setBlogs] = useState([]);
+  const [filteredBlogs, setFilteredBlogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
@@ -16,9 +17,34 @@ export default function BlogPage() {
   const [itemsPerPage] = useState(10);
   const [totalPages, setTotalPages] = useState(1);
 
+  // Filter state
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [categories, setCategories] = useState([]);
+
   useEffect(() => {
     fetchBlogs();
   }, []);
+
+  useEffect(() => {
+    // Extract unique categories from blogs
+    const uniqueCategories = [...new Set(blogs.map(blog => blog.blog_cat_id))].filter(cat => cat);
+    setCategories(uniqueCategories);
+    
+    // Apply category filter
+    if (selectedCategory === 'all') {
+      setFilteredBlogs(blogs);
+    } else {
+      setFilteredBlogs(blogs.filter(blog => blog.blog_cat_id === selectedCategory));
+    }
+    
+    // Reset to first page when filter changes
+    setCurrentPage(1);
+  }, [blogs, selectedCategory]);
+
+  useEffect(() => {
+    // Update total pages when filtered blogs change
+    setTotalPages(Math.ceil(filteredBlogs.length / itemsPerPage));
+  }, [filteredBlogs, itemsPerPage]);
 
   // Function to convert Firestore timestamp to readable date
   const formatDate = (dateValue) => {
@@ -72,7 +98,6 @@ export default function BlogPage() {
         
         console.log('Blogs data:', blogsData);
         setBlogs(blogsData);
-        setTotalPages(Math.ceil(blogsData.length / itemsPerPage));
         setLoading(false);
       });
 
@@ -118,12 +143,6 @@ export default function BlogPage() {
       try {
         await deleteDoc(doc(db, 'blog', id));
         setBlogs(blogs.filter(blog => blog.id !== id));
-        // Recalculate total pages after deletion
-        setTotalPages(Math.ceil((blogs.length - 1) / itemsPerPage));
-        // If we deleted the last item on the current page, go back a page
-        if (currentPage > 1 && (blogs.length - 1) <= ((currentPage - 1) * itemsPerPage)) {
-          setCurrentPage(currentPage - 1);
-        }
         showToast('Blog deleted successfully!', 'success');
       } catch (error) {
         console.error('Error deleting blog:', error);
@@ -135,7 +154,7 @@ export default function BlogPage() {
   // Get current blogs for pagination
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentBlogs = blogs.slice(indexOfFirstItem, indexOfLastItem);
+  const currentBlogs = filteredBlogs.slice(indexOfFirstItem, indexOfLastItem);
 
   // Change page
   const paginate = (pageNumber) => setCurrentPage(pageNumber);
@@ -286,21 +305,61 @@ export default function BlogPage() {
           </div>
         </div>
 
+        {/* Filter Section */}
+        <div className="bg-white rounded-2xl shadow-lg p-6 mb-8">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <h2 className="text-xl font-semibold text-gray-800">Filter Blogs</h2>
+            <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
+              <div className="relative w-full sm:w-64">
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-300 appearance-none"
+                >
+                  <option value="all">All Categories</option>
+                  {categories.map((category, index) => (
+                    <option key={index} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                  </svg>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedCategory('all')}
+                className="px-4 py-3 bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white font-medium rounded-xl transition-all duration-300 transform hover:-translate-y-1"
+              >
+                Clear Filter
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Blog Table */}
         <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
-          {blogs.length === 0 ? (
+          {filteredBlogs.length === 0 ? (
             <div className="text-center py-16">
               <div className="flex flex-col items-center">
                 <svg className="w-20 h-20 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                 </svg>
-                <h3 className="text-xl font-semibold text-gray-500 mb-2">No Blogs Found</h3>
-                <p className="text-gray-400 mb-6">Get started by creating your first blog post</p>
+                <h3 className="text-xl font-semibold text-gray-500 mb-2">
+                  {selectedCategory === 'all' ? 'No Blogs Found' : 'No Blogs in Selected Category'}
+                </h3>
+                <p className="text-gray-400 mb-6">
+                  {selectedCategory === 'all' 
+                    ? 'Get started by creating your first blog post' 
+                    : `No blogs found in the "${selectedCategory}" category`}
+                </p>
                 <Link 
                   href="/Admin/blog/add"
                   className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
                 >
-                  Create First Blog
+                  Create New Blog
                 </Link>
               </div>
             </div>
@@ -422,9 +481,14 @@ export default function BlogPage() {
                       <p className="text-sm text-gray-700">
                         Showing <span className="font-medium text-blue-600">{indexOfFirstItem + 1}</span> to{' '}
                         <span className="font-medium text-blue-600">
-                          {indexOfLastItem > blogs.length ? blogs.length : indexOfLastItem}
+                          {indexOfLastItem > filteredBlogs.length ? filteredBlogs.length : indexOfLastItem}
                         </span> of{' '}
-                        <span className="font-medium text-blue-600">{blogs.length}</span> results
+                        <span className="font-medium text-blue-600">{filteredBlogs.length}</span> results
+                        {selectedCategory !== 'all' && (
+                          <span className="ml-2 text-blue-500">
+                            (Filtered by: {selectedCategory})
+                          </span>
+                        )}
                       </p>
                     </div>
                     <div className="flex items-center space-x-2">
