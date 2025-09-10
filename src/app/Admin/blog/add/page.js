@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { doc, runTransaction, collection, addDoc, getDocs } from "firebase/firestore";
+import { doc, runTransaction, collection, setDoc, getDocs } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../../../firebase/config';
 import dynamic from 'next/dynamic';
@@ -34,27 +34,51 @@ export default function AddBlogPage() {
   const [loading, setLoading] = useState(false);
   const [categories, setCategories] = useState([]);
   const [imageUpload, setImageUpload] = useState(null);
+  const [coverImageUpload, setCoverImageUpload] = useState(null);
+  const [image3Upload, setImage3Upload] = useState(null);
   const [imageUploading, setImageUploading] = useState(false);
   const [editorLoaded, setEditorLoaded] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState('Ready');
   const router = useRouter();
 
+  // Updated formData to match your collection structure
   const [formData, setFormData] = useState({
+    // Basic blog fields
+    blog_name: '',
     blog_title: '',
+    blog_description: '',
     blog_content_text: '',
     blog_keywords: '',
     blog_url: '',
     blog_cat_id: '',
     blog_image: '',
+    blog_image_cover: '',
     blog_date: new Date().toISOString().split('T')[0],
-    status: 'draft',
+    blog_type: null,
+    
+    // Meta fields
     meta_title: '',
     meta_description: '',
     meta_keywords: '',
-    robots: 'index, follow',
     canonical: '',
-    created_at: new Date().toISOString(),
+    robots: 'index, follow',
+    
+    // Status and timestamps
+    status: 'draft',
+    publishdate: new Date().toISOString().split('T')[0],
+    created_at: new Date().toISOString().split('T')[0],
+    update_time: new Date().toISOString(),
+    createdAt: new Date(),
+    updatedAt: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    
+    // Additional fields from your structure
+    author_name: 'ADMIN',
+    user_id: null,
+    image3: null,
+    ckeditercontant: null,
+    blog_id: null, // Will be set when saving
+    id: null, // Will be set to same value as document ID
   });
 
   useEffect(() => {
@@ -66,13 +90,14 @@ export default function AddBlogPage() {
     if (formData.blog_title && !formData.blog_url) {
       const slug = formData.blog_title
         .toLowerCase()
-        .replace(/[^\w\s-]/g, '') // Remove special characters
-        .replace(/\s+/g, '-') // Replace spaces with hyphens
+        .replace(/[^\w\s-]/g, '')
+        .replace(/\s+/g, '-')
         .trim();
       
       setFormData(prev => ({
         ...prev,
-        blog_url: slug
+        blog_url: slug,
+        blog_name: formData.blog_title // Also update blog_name
       }));
     }
   }, [formData.blog_title]);
@@ -89,14 +114,13 @@ export default function AddBlogPage() {
       }));
     }
 
-    // Auto-generate meta description from content if not set
-    if (formData.blog_content_text && !formData.meta_description) {
-      // Strip HTML tags and get plain text
-      const plainText = formData.blog_content_text.replace(/<[^>]*>/g, '');
-      if (plainText.length > 10) {
-        const description = plainText.length > 160 
-          ? plainText.substring(0, 157) + '...' 
-          : plainText;
+    // Auto-generate meta description from blog_description or content
+    if (!formData.meta_description) {
+      let sourceText = formData.blog_description || formData.blog_content_text.replace(/<[^>]*>/g, '');
+      if (sourceText.length > 10) {
+        const description = sourceText.length > 160 
+          ? sourceText.substring(0, 157) + '...' 
+          : sourceText;
         
         setFormData(prev => ({
           ...prev,
@@ -104,7 +128,22 @@ export default function AddBlogPage() {
         }));
       }
     }
-  }, [formData.blog_title, formData.blog_content_text]);
+
+    // Auto-generate blog description from content if not set
+    if (formData.blog_content_text && !formData.blog_description) {
+      const plainText = formData.blog_content_text.replace(/<[^>]*>/g, '');
+      if (plainText.length > 10) {
+        const description = plainText.length > 200 
+          ? plainText.substring(0, 197) + '...' 
+          : plainText;
+        
+        setFormData(prev => ({
+          ...prev,
+          blog_description: description
+        }));
+      }
+    }
+  }, [formData.blog_title, formData.blog_content_text, formData.blog_description]);
 
   const fetchCategories = async () => {
     try {
@@ -112,10 +151,10 @@ export default function AddBlogPage() {
       const categoriesData = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data();
-        // Only show active categories
         if (data.status === 'active') {
           categoriesData.push({ 
             id: doc.id, 
+            name: data.name || data.category_name || 'Unnamed Category',
             ...data 
           });
         }
@@ -130,42 +169,65 @@ export default function AddBlogPage() {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
+    const now = new Date();
+    
     setFormData(prev => ({
       ...prev,
       [name]: value,
-      updated_at: new Date().toISOString()
+      updatedAt: now.toISOString(),
+      updated_at: now.toISOString(),
+      update_time: now.toISOString()
     }));
   };
 
   const handleEditorChange = (content) => {
     console.log('Editor content changed:', content.length, 'characters');
+    const now = new Date();
+    
     setFormData(prev => ({
       ...prev,
       blog_content_text: content,
-      updated_at: new Date().toISOString()
+      ckeditercontant: content, // Store CKEditor content separately if needed
+      updatedAt: now.toISOString(),
+      updated_at: now.toISOString(),
+      update_time: now.toISOString()
     }));
     
-    // Show content update feedback
     setAutoSaveStatus('Modified');
     setTimeout(() => setAutoSaveStatus('Ready'), 2000);
   };
 
-  const uploadImage = async () => {
-    if (!imageUpload) return '';
+  const uploadImage = async (file, folder = 'blogs') => {
+    if (!file) {
+      console.log('No file provided to uploadImage');
+      return '';
+    }
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select a valid image file');
+      return '';
+    }
+
+    // Validate file size (e.g., 5MB limit)
+    const maxSize = 5 * 1024 * 1024; // 5MB in bytes
+    if (file.size > maxSize) {
+      toast.error('Image size should be less than 5MB');
+      return '';
+    }
 
     setImageUploading(true);
     try {
-      const imageRef = ref(storage, `blogs/${Date.now()}_${imageUpload.name}`);
-      const snapshot = await uploadBytes(imageRef, imageUpload);
+      const imageRef = ref(storage, `${folder}/${Date.now()}_${file.name}`);
+      const snapshot = await uploadBytes(imageRef, file);
       const downloadURL = await getDownloadURL(snapshot.ref);
-      setImageUploading(false);
-      toast.success('Image uploaded successfully');
       return downloadURL;
     } catch (error) {
       console.error('Error uploading image:', error);
-      setImageUploading(false);
       toast.error('Failed to upload image');
       return '';
+    } finally {
+      setImageUploading(false);
     }
   };
 
@@ -199,20 +261,44 @@ export default function AddBlogPage() {
     setAutoSaveStatus('Saving...');
 
     try {
-      // Upload image if selected
+      // Upload images if selected
       let imageUrl = formData.blog_image;
+      let coverImageUrl = formData.blog_image_cover;
+      let image3Url = formData.image3;
+
       if (imageUpload) {
-        imageUrl = await uploadImage();
+        imageUrl = await uploadImage(imageUpload, 'blogs');
         if (!imageUrl) {
           setLoading(false);
           setAutoSaveStatus('Error');
           return;
         }
+        toast.success('Main image uploaded successfully');
       }
 
-      // Step 1: get next blog_id with a Firestore transaction
+      if (coverImageUpload) {
+        coverImageUrl = await uploadImage(coverImageUpload, 'blogs/covers');
+        if (!coverImageUrl) {
+          setLoading(false);
+          setAutoSaveStatus('Error');
+          return;
+        }
+        toast.success('Cover image uploaded successfully');
+      }
+
+      if (image3Upload) {
+        image3Url = await uploadImage(image3Upload, 'blogs/additional');
+        if (!image3Url) {
+          setLoading(false);
+          setAutoSaveStatus('Error');
+          return;
+        }
+        toast.success('Additional image uploaded successfully');
+      }
+
+      // Get next numeric ID with Firestore transaction
       const counterRef = doc(db, "metadata", "blogCounter");
-      const blog_id = await runTransaction(db, async (transaction) => {
+      const numericId = await runTransaction(db, async (transaction) => {
         const counterDoc = await transaction.get(counterRef);
         let newId = 1;
         if (counterDoc.exists()) {
@@ -222,33 +308,70 @@ export default function AddBlogPage() {
         return newId;
       });
 
-      // Step 2: prepare blog data
+      // Prepare blog data matching your collection structure
+      const now = new Date();
       const blogData = {
-        ...formData,
-        blog_id, // <-- numeric ID
+        // Core fields - both blog_id and id set to the same numeric value
+        id: numericId, // Add id field with numeric value
+        blog_id: numericId, // Keep as number (not string) for consistency
+        blog_name: formData.blog_name || formData.blog_title,
+        blog_title: formData.blog_title,
+        blog_description: formData.blog_description,
+        blog_content_text: formData.blog_content_text,
+        blog_keywords: formData.blog_keywords,
+        blog_url: formData.blog_url,
+        blog_cat_id: formData.blog_cat_id,
         blog_image: imageUrl,
+        blog_image_cover: coverImageUrl || null,
+        blog_date: formData.blog_date,
+        blog_type: formData.blog_type,
+        
+        // Meta fields
+        meta_title: formData.meta_title,
+        meta_description: formData.meta_description,
+        meta_keywords: formData.meta_keywords,
+        canonical: formData.canonical,
+        Canonical: formData.canonical, // Duplicate field as in your structure
+        Robots: formData.robots, // Uppercase version
+        robots: formData.robots,
+        
+        // Status and dates
+        status: formData.status,
+        publishdate: formData.publishdate,
+        created_at: formData.created_at,
+        update_time: now.toISOString().replace('T', ' ').substring(0, 19),
+        createdAt: now,
+        updatedAt: now.toISOString(),
+        updated_at: now.toISOString(),
+        
+        // Additional fields
+        author_name: formData.author_name,
+        user_id: formData.user_id,
+        image3: image3Url || null,
+        ckeditercontant: formData.ckeditercontant,
+        
+        // Calculated fields
         word_count: plainTextContent.split(/\s+/).length,
-        reading_time: Math.ceil(plainTextContent.split(/\s+/).length / 200), // ~200 words per minute
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        reading_time: Math.ceil(plainTextContent.split(/\s+/).length / 200),
       };
 
-      console.log('Saving blog with data:', {
+      console.log('Saving blog with numeric ID:', numericId, 'and data:', {
         ...blogData,
-        blog_content_text: `${blogData.blog_content_text.slice(0, 100)}...` // Log only first 100 chars
+        blog_content_text: `${blogData.blog_content_text.slice(0, 100)}...`
       });
 
-      // Step 3: save blog (random Firestore ID + numeric field inside)
-      await addDoc(collection(db, "blogs"), blogData);
+      // Save blog with numeric document ID using setDoc
+      const blogDocRef = doc(db, "blog", numericId.toString());
+      await setDoc(blogDocRef, blogData);
 
       setAutoSaveStatus('Saved');
-      toast.success("Blog added successfully!");
+      toast.success(`Blog added successfully with ID: ${numericId}`);
       setTimeout(() => {
         router.push("/Admin/blog");
       }, 1500);
     } catch (error) {
       console.error("Error adding blog:", error);
-      toast.error("Error adding blog");
+      toast.error("Error adding blog: " + error.message);
       setLoading(false);
       setAutoSaveStatus('Error');
     }
@@ -260,17 +383,14 @@ export default function AddBlogPage() {
       return;
     }
 
-    // Save as draft with current status
     const currentStatus = formData.status;
     setFormData(prev => ({ ...prev, status: 'draft' }));
     
-    // Trigger form submission
     const form = document.getElementById('blog-form');
     if (form) {
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     }
     
-    // Restore original status if it wasn't draft
     if (currentStatus !== 'draft') {
       setTimeout(() => {
         setFormData(prev => ({ ...prev, status: currentStatus }));
@@ -285,7 +405,7 @@ export default function AddBlogPage() {
 
   const getReadingTime = () => {
     const wordCount = getWordCount();
-    return Math.ceil(wordCount / 200); // Assuming 200 words per minute
+    return Math.ceil(wordCount / 200);
   };
 
   return (
@@ -346,128 +466,222 @@ export default function AddBlogPage() {
 
           <div className="bg-white shadow rounded-lg p-6">
             <form id="blog-form" onSubmit={handleSubmit} className="space-y-6">
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="blog_title" className="block text-sm font-medium text-gray-700">
-                    Blog Title *
-                  </label>
-                  <input
-                    type="text"
-                    id="blog_title"
-                    name="blog_title"
-                    value={formData.blog_title}
-                    onChange={handleInputChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
-                    placeholder="Enter an engaging blog title..."
-                    required
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    {formData.blog_title.length}/100 characters
-                  </p>
-                </div>
-
-                <div>
-                  <label htmlFor="blog_cat_id" className="block text-sm font-medium text-gray-700">
-                    Category *
-                  </label>
-                  <select
-                    id="blog_cat_id"
-                    name="blog_cat_id"
-                    value={formData.blog_cat_id}
-                    onChange={handleInputChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
-                    required
-                  >
-                    <option value="">Select Category</option>
-                    {categories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
-                  {categories.length === 0 && (
-                    <p className="text-sm text-red-600 mt-1">
-                      No active categories found. Please create a category first.
+              {/* Basic Information Section */}
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Basic Information</h3>
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="blog_title" className="block text-sm font-medium text-gray-700">
+                      Blog Title *
+                    </label>
+                    <input
+                      type="text"
+                      id="blog_title"
+                      name="blog_title"
+                      value={formData.blog_title}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
+                      placeholder="Enter an engaging blog title..."
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      {formData.blog_title.length}/100 characters
                     </p>
-                  )}
-                </div>
+                  </div>
 
-                <div>
-                  <label htmlFor="blog_url" className="block text-sm font-medium text-gray-700">
-                    Blog URL Slug
-                  </label>
-                  <input
-                    type="text"
-                    id="blog_url"
-                    name="blog_url"
-                    value={formData.blog_url}
-                    onChange={handleInputChange}
-                    placeholder="auto-generated-from-title"
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Auto-generated from title. Edit if needed.
-                  </p>
-                </div>
+                  <div>
+                    <label htmlFor="blog_cat_id" className="block text-sm font-medium text-gray-700">
+                      Category *
+                    </label>
+                    <select
+                      id="blog_cat_id"
+                      name="blog_cat_id"
+                      value={formData.blog_cat_id}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
+                      required
+                    >
+                      <option value="">Select Category</option>
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                <div>
-                  <label htmlFor="status" className="block text-sm font-medium text-gray-700">
-                    Status
-                  </label>
-                  <select
-                    id="status"
-                    name="status"
-                    value={formData.status}
-                    onChange={handleInputChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
-                  >
-                    <option value="draft">Draft</option>
-                    <option value="published">Published</option>
-                    <option value="scheduled">Scheduled</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label htmlFor="blog_image" className="block text-sm font-medium text-gray-700">
-                    Featured Image
-                  </label>
-                  <input
-                    type="file"
-                    id="blog_image"
-                    onChange={(e) => setImageUpload(e.target.files[0])}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                    accept="image/*"
-                  />
-                  {imageUploading && (
-                    <p className="text-sm text-blue-600 mt-1 flex items-center">
-                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      Uploading image...
+                  <div className="sm:col-span-2">
+                    <label htmlFor="blog_description" className="block text-sm font-medium text-gray-700">
+                      Blog Description
+                    </label>
+                    <textarea
+                      id="blog_description"
+                      name="blog_description"
+                      value={formData.blog_description}
+                      onChange={handleInputChange}
+                      rows="3"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
+                      placeholder="Brief description of the blog post..."
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      {formData.blog_description.length}/300 characters
                     </p>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    Recommended: 1200x630px (PNG, JPG, WebP)
-                  </p>
-                </div>
+                  </div>
 
-                <div>
-                  <label htmlFor="blog_date" className="block text-sm font-medium text-gray-700">
-                    Publish Date
-                  </label>
-                  <input
-                    type="date"
-                    id="blog_date"
-                    name="blog_date"
-                    value={formData.blog_date}
-                    onChange={handleInputChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
-                  />
+                  <div>
+                    <label htmlFor="blog_url" className="block text-sm font-medium text-gray-700">
+                      Blog URL Slug
+                    </label>
+                    <input
+                      type="text"
+                      id="blog_url"
+                      name="blog_url"
+                      value={formData.blog_url}
+                      onChange={handleInputChange}
+                      placeholder="auto-generated-from-title"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="blog_keywords" className="block text-sm font-medium text-gray-700">
+                      Blog Keywords
+                    </label>
+                    <input
+                      type="text"
+                      id="blog_keywords"
+                      name="blog_keywords"
+                      value={formData.blog_keywords}
+                      onChange={handleInputChange}
+                      placeholder="keyword1, keyword2, keyword3"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="author_name" className="block text-sm font-medium text-gray-700">
+                      Author Name
+                    </label>
+                    <input
+                      type="text"
+                      id="author_name"
+                      name="author_name"
+                      value={formData.author_name}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
+                      placeholder="Author name"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="status" className="block text-sm font-medium text-gray-700">
+                      Status
+                    </label>
+                    <select
+                      id="status"
+                      name="status"
+                      value={formData.status}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
+                    >
+                      <option value="draft">Draft</option>
+                      <option value="published">Published</option>
+                      <option value="scheduled">Scheduled</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
-              <div>
+              {/* Images Section */}
+              <div className="border-t pt-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Images</h3>
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
+                  <div>
+                    <label htmlFor="blog_image" className="block text-sm font-medium text-gray-700">
+                      Featured Image
+                    </label>
+                    <input
+                      type="file"
+                      id="blog_image"
+                      onChange={(e) => setImageUpload(e.target.files[0])}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                      accept="image/*"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="blog_image_cover" className="block text-sm font-medium text-gray-700">
+                      Cover Image
+                    </label>
+                    <input
+                      type="file"
+                      id="blog_image_cover"
+                      onChange={(e) => setCoverImageUpload(e.target.files[0])}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                      accept="image/*"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="image3" className="block text-sm font-medium text-gray-700">
+                      Additional Image
+                    </label>
+                    <input
+                      type="file"
+                      id="image3"
+                      onChange={(e) => setImage3Upload(e.target.files[0])}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                      accept="image/*"
+                    />
+                  </div>
+                </div>
+                {imageUploading && (
+                  <p className="text-sm text-blue-600 mt-2 flex items-center">
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Uploading images...
+                  </p>
+                )}
+              </div>
+
+              {/* Dates Section */}
+              <div className="border-t pt-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Publishing Information</h3>
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="blog_date" className="block text-sm font-medium text-gray-700">
+                      Blog Date
+                    </label>
+                    <input
+                      type="date"
+                      id="blog_date"
+                      name="blog_date"
+                      value={formData.blog_date}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="publishdate" className="block text-sm font-medium text-gray-700">
+                      Publish Date
+                    </label>
+                    <input
+                      type="date"
+                      id="publishdate"
+                      name="publishdate"
+                      value={formData.publishdate}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Content Section */}
+              <div className="border-t pt-6">
                 <label htmlFor="blog_content_text" className="block text-sm font-medium text-gray-700 mb-2">
                   Blog Content *
                   <span className="text-xs text-gray-500 ml-2">
@@ -575,6 +789,48 @@ export default function AddBlogPage() {
                 </div>
               </div>
 
+              {/* Additional Options Section */}
+              <div className="border-t pt-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Additional Options</h3>
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="blog_type" className="block text-sm font-medium text-gray-700">
+                      Blog Type
+                    </label>
+                    <select
+                      id="blog_type"
+                      name="blog_type"
+                      value={formData.blog_type || ''}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
+                    >
+                      <option value="">Select Blog Type (Optional)</option>
+                      <option value="article">Article</option>
+                      <option value="news">News</option>
+                      <option value="tutorial">Tutorial</option>
+                      <option value="review">Review</option>
+                      <option value="guide">Guide</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label htmlFor="user_id" className="block text-sm font-medium text-gray-700">
+                      User ID
+                    </label>
+                    <input
+                      type="text"
+                      id="user_id"
+                      name="user_id"
+                      value={formData.user_id || ''}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:border-blue-500 focus:ring-blue-500"
+                      placeholder="Optional user ID"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
               <div className="flex justify-end space-x-3 pt-6 border-t">
                 <button
                   type="button"
