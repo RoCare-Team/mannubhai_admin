@@ -503,7 +503,7 @@ export default function AddBlogPage() {
                     >
                       <option value="">Select Category</option>
                       {categories.map((category) => (
-                        <option key={category.id} value={category.id}>
+                        <option key={category.id} value={category.name}>
                           {category.name}
                         </option>
                       ))}
