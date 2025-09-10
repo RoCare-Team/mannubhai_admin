@@ -34,14 +34,13 @@ export default function AdminDashboard() {
 
   // Collection configurations
   const collections = [
-    { name: 'blog', displayName: 'Blog Posts', color: 'blue' },
-    { name: 'applications', displayName: 'Applications', color: 'green' },
-    { name: 'category_manage', displayName: 'Categories', color: 'purple' },
-    { name: 'enquireOptions', displayName: 'Contact Leads', color: 'orange' },
-    { name: 'footer_url', displayName: 'Footer URLs', color: 'indigo' },
-    { name: 'states_cities', displayName: 'States & Cities', color: 'red' }
+    { name: 'blog', displayName: 'Blog Posts', color: 'blue', link: '/Admin/blog' },
+    { name: 'applications', displayName: 'Partner Leads', color: 'green', link: '/Admin/partner_leads' },
+    { name: 'category_manage', displayName: 'Categories', color: 'purple', link: '/Admin/category' },
+    { name: 'enquireOptions', displayName: 'Contact Leads', color: 'orange', link: '/Admin/contactLeads' },
+    { name: 'footer_url', displayName: 'Footer URL', color: 'indigo', link: '/Admin/addLink' },
+    // { name: 'states_cities', displayName: 'States & Cities', color: 'red', link: '/Admin' }
   ];
-
 
   
   // Authentication check
@@ -398,7 +397,11 @@ export default function AdminDashboard() {
                   const percentage = totalCollectionRecords > 0 ? ((count / totalCollectionRecords) * 100).toFixed(1) : '0';
                   
                   return (
-                    <div key={collectionConfig.name} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                    <Link 
+                      key={collectionConfig.name} 
+                      href={collectionConfig.link}
+                      className="block border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow hover:border-blue-300"
+                    >
                       <div className="flex items-center justify-between mb-3">
                         <div className={`w-3 h-3 rounded-full ${getColorClasses(collectionConfig.color)}`}></div>
                         <span className="text-xs text-gray-500">{percentage}%</span>
@@ -423,7 +426,7 @@ export default function AdminDashboard() {
                           ></div>
                         </div>
                       </div>
-                    </div>
+                    </Link>
                   );
                 })}
               </div>

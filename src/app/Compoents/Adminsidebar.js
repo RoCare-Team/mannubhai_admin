@@ -45,7 +45,7 @@ export function AdminSidebar({ sidebarOpen, setSidebarOpen }) {
       ),
     },
       {
-      name: 'PatnerLeads',
+      name: 'Partner  Leads',
       href: '/Admin/partner_leads',
       icon: (
          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -54,7 +54,7 @@ export function AdminSidebar({ sidebarOpen, setSidebarOpen }) {
       ),
     },
      {
-      name: 'Add Link',
+      name: ' Footer Add Links',
       href: '/Admin/addLink',
       icon: (
          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
