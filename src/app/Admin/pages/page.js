@@ -144,6 +144,7 @@ const ActivePagesManager = () => {
     
     console.log(`Looking for city ID: ${cityId}, found:`, city);
     
+    
     return city ? {
       name: city.name || `City ID: ${cityId}`,
       url: city.url || '',
