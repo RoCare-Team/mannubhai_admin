@@ -38,15 +38,13 @@ const ExternalLinkIcon = () => (
 );
 
 const ActivePagesManager = () => {
-  const [activePages, setActivePages] = useState([]);
-  const [filteredPages, setFilteredPages] = useState([]);
+  const [pages, setPages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [categories, setCategories] = useState([]);
   const [cities, setCities] = useState([]);
   const [states, setStates] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
-  const [totalCount, setTotalCount] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [cityFilter, setCityFilter] = useState('all');
@@ -54,6 +52,8 @@ const ActivePagesManager = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
   
+  const [lastVisible, setLastVisible] = useState(null);
+  const [totalCount, setTotalCount] = useState(0);
   const ITEMS_PER_PAGE = 10;
 
   // Fetch categories from category_manage collection
@@ -144,6 +144,7 @@ const ActivePagesManager = () => {
     
     console.log(`Looking for city ID: ${cityId}, found:`, city);
     
+    
     return city ? {
       name: city.name || `City ID: ${cityId}`,
       url: city.url || '',
@@ -152,138 +153,105 @@ const ActivePagesManager = () => {
   }, [cities]);
 
   const createPageUrl = useCallback((page) => {
+    const baseUrl = 'https://www.mannubhai.com';
     const categoryInfo = getCategoryInfo(page.category_id);
     const cityInfo = getCityInfo(page.city_id);
     
+    let relativeUrl = '';
     if (cityInfo.url && categoryInfo.url) {
-      return `/${cityInfo.url}/${categoryInfo.url}`;
+      relativeUrl = `/${cityInfo.url}/${categoryInfo.url}`;
     } else if (categoryInfo.url) {
-      return `/${categoryInfo.url}`;
+      relativeUrl = `/${categoryInfo.url}`;
     } else if (cityInfo.url) {
-      return `/${cityInfo.url}`;
+      relativeUrl = `/${cityInfo.url}`;
+    } else if (page.page_url) {
+      // Ensure page.page_url starts with a slash
+      relativeUrl = page.page_url.startsWith('/') ? page.page_url : `/${page.page_url}`;
     } else {
-      return page.page_url || '#';
+      return '#'; // Return a fallback if no URL can be constructed
     }
+    return `${baseUrl}${relativeUrl}`;
   }, [getCategoryInfo, getCityInfo]);
 
-  // Fetch all pages
-  const fetchAllActivePages = useCallback(async () => {
+  const fetchPages = useCallback(async (pageNumber = 1, isRefresh = false) => {
     setLoading(true);
     try {
-      // First try with ordering
-      let q;
-      try {
-        q = query(
-          collection(db, 'page_master_tb'),
-          orderBy('updated_at', 'desc')
-        );
-      } catch (orderError) {
-        console.log('Ordering failed, trying without order:', orderError);
-        q = query(collection(db, 'page_master_tb'));
+      let baseQuery = collection(db, 'page_master_tb');
+      let queryConstraints = [];
+
+      // Build where clauses for filtering
+      if (statusFilter !== 'all') {
+        queryConstraints.push(where('status', '==', statusFilter));
       }
-      
-      const snapshot = await getDocs(q);
+      if (categoryFilter !== 'all') {
+        queryConstraints.push(where('category_id', '==', categoryFilter));
+      }
+      if (cityFilter !== 'all') {
+        queryConstraints.push(where('city_id', '==', cityFilter));
+      } else if (stateFilter !== 'all') {
+        const stateCities = cities.filter(city => city.state === stateFilter);
+        const stateCityIds = stateCities.map(city => String(city.id)).filter(id => id);
+        if (stateCityIds.length > 0) {
+          queryConstraints.push(where('city_id', 'in', stateCityIds));
+        } else {
+          // If no cities for state, no results will be found
+          setPages([]);
+          setTotalPages(0);
+          setTotalCount(0);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Get total count for pagination
+      const countQuery = query(baseQuery, ...queryConstraints);
+      const countSnapshot = await getCountFromServer(countQuery);
+      const totalDocs = countSnapshot.data().count;
+      setTotalCount(totalDocs);
+      setTotalPages(Math.ceil(totalDocs / ITEMS_PER_PAGE));
+
+      // Add sorting and pagination to the query
+      queryConstraints.push(orderBy('updated_at', 'desc'));
+
+      if (pageNumber > 1 && lastVisible && !isRefresh) {
+        queryConstraints.push(startAfter(lastVisible));
+      }
+      queryConstraints.push(limit(ITEMS_PER_PAGE));
+
+      const finalQuery = query(baseQuery, ...queryConstraints);
+      const snapshot = await getDocs(finalQuery);
+
       const pagesData = snapshot.docs.map(doc => {
         const data = doc.data();
-        return {
-          id: doc.id, // Use document ID
-          docId: doc.id,
-          ...data
-        };
+        return { id: doc.id, docId: doc.id, ...data };
       });
-      
-      console.log('Pages loaded:', pagesData.length);
-      console.log('Sample page data:', pagesData.slice(0, 2));
-      
-      setActivePages(pagesData);
-      setTotalCount(pagesData.length);
+
+      setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+      setPages(pagesData);
+      setCurrentPage(pageNumber);
+
     } catch (error) {
       console.error('Error fetching pages:', error);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, []);
-
-  // Apply filters to the data
-  const applyFilters = useCallback(() => {
-    let filtered = [...activePages];
-
-    console.log('Applying filters to', filtered.length, 'pages');
-
-    // Apply status filter first
-    if (statusFilter && statusFilter !== 'all') {
-      filtered = filtered.filter(page => {
-        const pageStatus = String(page.status || '0');
-        return pageStatus === String(statusFilter);
-      });
-      console.log('After status filter:', filtered.length);
-    }
-
-    // Apply category filter
-    if (categoryFilter && categoryFilter !== 'all') {
-      filtered = filtered.filter(page => {
-        const pageCategory = String(page.category_id || '');
-        const filterCategory = String(categoryFilter);
-        return pageCategory === filterCategory;
-      });
-      console.log('After category filter:', filtered.length);
-    }
-
-    // Apply state filter first (this will affect city options)
-    if (stateFilter && stateFilter !== 'all') {
-      const stateCities = cities.filter(city => city.state === stateFilter);
-      const stateCityIds = stateCities.map(city => String(city.id));
-      filtered = filtered.filter(page => {
-        const pageCityId = String(page.city_id || '');
-        return stateCityIds.includes(pageCityId);
-      });
-      console.log('After state filter:', filtered.length);
-    }
-
-    // Apply city filter
-    if (cityFilter && cityFilter !== 'all') {
-      filtered = filtered.filter(page => {
-        const pageCityId = String(page.city_id || '');
-        const filterCityId = String(cityFilter);
-        return pageCityId === filterCityId;
-      });
-      console.log('After city filter:', filtered.length);
-    }
-
-    // Apply search filter
-    if (searchTerm.trim()) {
-      const searchLower = searchTerm.toLowerCase().trim();
-      filtered = filtered.filter(page => {
-        const categoryInfo = getCategoryInfo(page.category_id);
-        const cityInfo = getCityInfo(page.city_id);
-        
-        const searchFields = [
-          page.page_title || '',
-          page.meta_title || '',
-          page.page_url || '',
-          page.meta_keywords || '',
-          categoryInfo.name || '',
-          cityInfo.name || '',
-          cityInfo.state || ''
-        ];
-        
-        return searchFields.some(field => 
-          field.toLowerCase().includes(searchLower)
-        );
-      });
-      console.log('After search filter:', filtered.length);
-    }
-
-    setFilteredPages(filtered);
-    setTotalPages(Math.ceil(filtered.length / ITEMS_PER_PAGE));
-    setCurrentPage(1); // Reset to first page when filters change
-  }, [activePages, statusFilter, categoryFilter, cityFilter, stateFilter, searchTerm, cities, getCategoryInfo, getCityInfo]);
+  }, [statusFilter, categoryFilter, cityFilter, stateFilter, cities, lastVisible]);
 
   // Get paginated data
   const paginatedData = useMemo(() => {
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-    const endIndex = startIndex + ITEMS_PER_PAGE;
-    return filteredPages.slice(startIndex, endIndex);
-  }, [filteredPages, currentPage]);
+    // Note: Search is client-side on the current page for simplicity.
+    // For full server-side search, you would need a search service like Algolia/Elasticsearch.
+    if (!searchTerm.trim()) {
+      return pages;
+    }
+    const searchLower = searchTerm.toLowerCase().trim();
+    return pages.filter(page => {
+      const categoryInfo = getCategoryInfo(page.category_id);
+      const cityInfo = getCityInfo(page.city_id);
+      const searchFields = [page.page_title, page.meta_title, categoryInfo.name, cityInfo.name, cityInfo.state];
+      return searchFields.some(field => field && field.toLowerCase().includes(searchLower));
+    });
+  }, [pages, searchTerm, getCategoryInfo, getCityInfo]);
 
   // Get filtered cities based on selected state
   const filteredCities = useMemo(() => {
@@ -298,17 +266,17 @@ const ActivePagesManager = () => {
         fetchCategories(),
         fetchCities()
       ]);
-      await fetchAllActivePages();
     };
-    
     initializeData();
-  }, [fetchCategories, fetchCities, fetchAllActivePages]);
+  }, [fetchCategories, fetchCities]);
 
   useEffect(() => {
-    if (activePages.length > 0 && categories.length > 0 && cities.length > 0) {
-      applyFilters();
+    // Fetch pages when filters change, or on initial load when dependencies are ready.
+    // The check for categories and cities prevents running the query before filters are populated.
+    if (categories.length > 0 && cities.length > 0) {
+      fetchPages(1, true); // isRefresh = true to reset pagination
     }
-  }, [applyFilters, activePages, categories, cities]);
+  }, [statusFilter, categoryFilter, cityFilter, stateFilter, categories, cities]);
 
   // Event handlers
   const handleFilterChange = (type, value) => {
@@ -333,11 +301,13 @@ const ActivePagesManager = () => {
     setCityFilter('all');
     setStateFilter('all');
     setStatusFilter('all');
+    setLastVisible(null);
+    setCurrentPage(1);
   };
 
   const handlePageChange = (page) => {
     if (page >= 1 && page <= totalPages && page !== currentPage) {
-      setCurrentPage(page);
+      fetchPages(page);
     }
   };
 
@@ -353,16 +323,16 @@ const ActivePagesManager = () => {
   // Debug function
   const debugData = () => {
     console.log('=== DEBUG INFO ===');
-    console.log('Active Pages:', activePages.length);
+    console.log('Current Page Pages:', pages.length);
     console.log('Categories:', categories.length);
     console.log('Cities:', cities.length);
-    console.log('Sample page:', activePages[0]);
+    console.log('Sample page:', pages[0]);
     console.log('Sample category:', categories[0]);
     console.log('Sample city:', cities[0]);
     
     // Check for ID matching issues
-    if (activePages.length > 0) {
-      const samplePage = activePages[0];
+    if (pages.length > 0) {
+      const samplePage = pages[0];
       console.log('Sample page category_id:', samplePage.category_id, typeof samplePage.category_id);
       console.log('Sample page city_id:', samplePage.city_id, typeof samplePage.city_id);
       
@@ -389,6 +359,12 @@ const ActivePagesManager = () => {
       pages.push(i);
     }
 
+
+    console.log("pagespages",pages);
+    
+
+    
+
     return (
       <div className="flex items-center justify-between px-4 py-3 sm:px-6 border-t border-gray-200">
         <div className="flex justify-between flex-1 sm:hidden">
@@ -411,8 +387,8 @@ const ActivePagesManager = () => {
           <div>
             <p className="text-sm text-gray-700">
               Showing <span className="font-medium">{((currentPage - 1) * ITEMS_PER_PAGE) + 1}</span> to{' '}
-              <span className="font-medium">{Math.min(currentPage * ITEMS_PER_PAGE, filteredPages.length)}</span> of{' '}
-              <span className="font-medium">{filteredPages.length}</span> results
+              <span className="font-medium">{Math.min(currentPage * ITEMS_PER_PAGE, totalCount)}</span> of{' '}
+              <span className="font-medium">{totalCount}</span> results
             </p>
           </div>
           <div>
@@ -466,7 +442,7 @@ const ActivePagesManager = () => {
               </div>
               <div className="flex items-center space-x-3">
                 <button
-                  onClick={fetchAllActivePages}
+                  onClick={() => fetchPages(1, true)}
                   className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                   <RefreshIcon />
@@ -479,8 +455,7 @@ const ActivePagesManager = () => {
                   Debug Data
                 </button>
                 <div className="text-sm text-gray-500">
-                  Total: <span className="font-semibold text-gray-900">{totalCount}</span> |
-                  Filtered: <span className="font-semibold text-gray-900">{filteredPages.length}</span>
+                  Total Pages: <span className="font-semibold text-gray-900">{totalCount}</span>
                   {statusFilter !== 'all' && (
                     <span className="ml-2 text-xs">
                       (Status: {statusFilter === '1' ? 'Active' : 'Inactive'})
@@ -715,7 +690,7 @@ const ActivePagesManager = () => {
               </div>
 
               {/* No Results */}
-              {filteredPages.length === 0 && !loading && (
+              {pages.length === 0 && !loading && (
                 <div className="text-center py-12">
                   <div className="mx-auto max-w-md">
                     <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -738,7 +713,7 @@ const ActivePagesManager = () => {
               )}
 
               {/* Pagination */}
-              {filteredPages.length > 0 && totalPages > 1 && <Pagination />}
+              {pages.length > 0 && totalPages > 1 && <Pagination />}
             </>
           )}
         </div>
