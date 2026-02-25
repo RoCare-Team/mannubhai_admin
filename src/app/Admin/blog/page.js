@@ -151,6 +151,112 @@ export default function BlogPage() {
     }
   };
 
+{/*
+  
+    const handleDelete = async (blogToDelete) => {
+  // Validate the blog object and ID
+  if (!blogToDelete ) {
+    console.error('Invalid blog object or missing ID:', blogToDelete);
+    showToast(blogToDelete+'Error: Invalid blog data. Cannot delete.', 'error');
+    return;
+  }
+
+  
+
+  // Create detailed confirmation message
+  const confirmMessage = `
+Are you sure you want to delete this blog?
+
+
+🆔 ID: ${blogToDelete}
+
+This action cannot be undone!
+  `.trim();
+
+  // Show detailed confirmation dialog
+  const isConfirmed = window.confirm(confirmMessage);
+  
+  if (!isConfirmed) {
+    console.log('Delete cancelled by user');
+    return;
+  }
+
+  try {
+    console.log('Starting delete operation for blog ID:', blogToDelete);
+    
+    // Validate that the ID is a string and not empty
+    const blogId = String(blogToDelete).trim();
+    if (!blogId || blogId === 'undefined' || blogId === 'null') {
+      throw new Error('Invalid blog ID format');
+    }
+
+    // Check if db is properly initialized
+    if (!db) {
+      throw new Error('Firestore database is not initialized');
+    }
+
+    console.log('Creating document reference for ID:', blogId);
+    
+    // Create document reference with explicit string conversion
+    const docRef = doc(db, 'blog', blogId);
+    
+    console.log('Document reference created:', docRef);
+    console.log('Document path:', docRef.path);
+
+    // Attempt to delete the document
+    console.log('Attempting to delete document...');
+    await deleteDoc(docRef);
+    
+    console.log('Document deleted successfully from Firestore');
+
+    // Update local state - remove the deleted blog from the blogs array
+    setBlogs(prevBlogs => {
+      const updatedBlogs = prevBlogs.filter(blog => blog.id !== blogToDelete.id);
+      console.log('Updated blogs array length:', updatedBlogs.length);
+      return updatedBlogs;
+    });
+
+    // Show success message
+    showToast(`Blog "${blogToDelete.blog_title || 'Untitled'}" deleted successfully!`, 'success');
+    
+    console.log('Delete operation completed successfully');
+
+  } catch (error) {
+    console.error('Error deleting blog:', error);
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      blogId: blogToDelete.id,
+      blogTitle: blogToDelete.blog_title
+    });
+    
+    // Show user-friendly error message
+    let errorMessage = 'Failed to delete blog. ';
+    
+    if (error.code === 'not-found') {
+      errorMessage += 'Blog not found in database.';
+    } else if (error.code === 'permission-denied') {
+      errorMessage += 'You do not have permission to delete this blog.';
+    } else if (error.message.includes('indexOf')) {
+      errorMessage += 'Invalid blog ID format.';
+    } else {
+      errorMessage += 'Please try again or contact support.';
+    }
+    
+    showToast(errorMessage, 'error');
+  }
+};
+
+  
+  
+  
+  
+  
+  */}
+
+
+
+
   // Get current blogs for pagination
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
