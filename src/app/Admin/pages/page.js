@@ -1,750 +1,523 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { 
-  collection, 
-  query, 
-  orderBy, 
-  limit,
-  startAfter,
-  getDocs, 
-  where,
-  getCountFromServer
-} from 'firebase/firestore';
-import { db } from '@/app/firebase/config';
+import { useState, useEffect, useRef } from "react";
+import {
+  collection, getDocs, orderBy, query,
+  limit, startAfter, getCountFromServer, where,
+  doc, updateDoc
+} from "firebase/firestore";
+import { db } from "@/app/firebase/config";
 
-// Modern Icons (you can replace with your preferred icon library)
-const SearchIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-  </svg>
-);
+const PAGE_SIZE = 20;
 
-const FilterIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.121A1 1 0 013 6.414V4z" />
-  </svg>
-);
+// ── Field groups for the edit modal ──────────────────────────────────────────
+const FIELD_GROUPS = [
+  {
+    label: "Basic Info",
+    fields: [
+      { key: "id",               label: "ID",               type: "text",     readOnly: true },
+      { key: "page_title",       label: "Page Title",       type: "text" },
+      { key: "page_url",         label: "Page URL",         type: "text" },
+      { key: "page_youtube_url", label: "YouTube URL",      type: "text" },
+      { key: "page_content",     label: "Page Content",     type: "textarea" },
+      { key: "status",           label: "Status",           type: "select", options: [{ value: "1", label: "Active" }, { value: "0", label: "Inactive" }] },
+      { key: "robot",            label: "Robot",            type: "select", options: [{ value: "index", label: "index" }, { value: "noindex", label: "noindex" }] },
+    ],
+  },
+  {
+    label: "SEO",
+    fields: [
+      { key: "meta_title",       label: "Meta Title",       type: "text" },
+      { key: "meta_description", label: "Meta Description", type: "textarea" },
+      { key: "meta_keywords",    label: "Meta Keywords",    type: "text" },
+    ],
+  },
+  {
+    label: "Relations",
+    fields: [
+      { key: "category_id",     label: "Category ID",      type: "text" },
+      { key: "city_id",         label: "City ID",          type: "text" },
+      { key: "brand_id",        label: "Brand ID",         type: "text" },
+      { key: "group_category",  label: "Group Category",   type: "text" },
+      { key: "brand_faq",       label: "Brand FAQ",        type: "text" },
+    ],
+  },
+  {
+    label: "FAQ Questions",
+    fields: Array.from({ length: 10 }, (_, i) => ({
+      key: `faqquestion${i + 1}`,
+      label: `Question ${i + 1}`,
+      type: "text",
+    })),
+  },
+  {
+    label: "FAQ Answers",
+    fields: Array.from({ length: 10 }, (_, i) => ({
+      key: `faqanswer${i + 1}`,
+      label: `Answer ${i + 1}`,
+      type: "textarea",
+    })),
+  },
+  {
+    label: "Timestamps",
+    fields: [
+      { key: "created_at", label: "Created At", type: "text", readOnly: true },
+      { key: "updated_at", label: "Updated At", type: "text", readOnly: true },
+    ],
+  },
+];
 
-const RefreshIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-  </svg>
-);
+// ── Edit Modal ────────────────────────────────────────────────────────────────
+function EditModal({ page, categoryMap, cityMap, onClose, onSaved }) {
+  const [form, setForm] = useState(() => {
+    const init = {};
+    FIELD_GROUPS.flatMap((g) => g.fields).forEach(({ key }) => {
+      init[key] = page[key] ?? "";
+    });
+    return init;
+  });
+  const [activeTab, setActiveTab] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saved, setSaved] = useState(false);
 
-const ExternalLinkIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-  </svg>
-);
+  const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
 
-const ActivePagesManager = () => {
-  const [activePages, setActivePages] = useState([]);
-  const [filteredPages, setFilteredPages] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [categories, setCategories] = useState([]);
-  const [cities, setCities] = useState([]);
-  const [states, setStates] = useState([]);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(0);
-  const [totalCount, setTotalCount] = useState(0);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [cityFilter, setCityFilter] = useState('all');
-  const [stateFilter, setStateFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [showFilters, setShowFilters] = useState(false);
-  
-  const ITEMS_PER_PAGE = 10;
-
-  // Fetch categories from category_manage collection
-  const fetchCategories = useCallback(async () => {
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError(null);
     try {
-      const snapshot = await getDocs(collection(db, 'category_manage'));
-      const categoriesData = snapshot.docs
-        .map(doc => {
-          const data = doc.data();
-          return {
-            id: data.id || doc.id, // Use data.id if available, fallback to doc.id
-            docId: doc.id,
-            name: data.category_name,
-            url: data.category_url,
-            status: data.status,
-            ...data
-          };
-        })
-        .filter(cat => cat.status === '1' || cat.status === 1)
-        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-      
-      console.log('Categories loaded:', categoriesData.length, categoriesData.slice(0, 3));
-      setCategories(categoriesData);
-    } catch (error) {
-      console.error('Error fetching categories:', error);
+      const payload = {};
+      FIELD_GROUPS.flatMap((g) => g.fields)
+        .filter((f) => !f.readOnly)
+        .forEach(({ key }) => {
+          payload[key] = form[key] === "" ? null : form[key];
+        });
+      payload.updated_at = new Date().toISOString().replace("T", " ").slice(0, 19);
+
+      await updateDoc(doc(db, "page_master_tb", page.docId), payload);
+      setSaved(true);
+      onSaved({ ...page, ...payload });
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setSaveError(err.message);
+    } finally {
+      setSaving(false);
     }
-  }, []);
+  };
 
-  // Fetch cities from city_tb collection
-  const fetchCities = useCallback(async () => {
-    try {
-      const snapshot = await getDocs(collection(db, 'city_tb'));
-      const citiesData = snapshot.docs
-        .map(doc => {
-          const data = doc.data();
-          return {
-            id: data.id || doc.id, // Use data.id if available, fallback to doc.id
-            docId: doc.id,
-            name: data.city_name,
-            url: data.city_url,
-            state: data.state_name,
-            status: data.status,
-            ...data
-          };
-        })
-        .filter(city => city.status === '1' || city.status === 1)
-        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-      
-      console.log('Cities loaded:', citiesData.length, citiesData.slice(0, 3));
-      setCities(citiesData);
-      
-      // Extract unique states
-      const uniqueStates = [...new Set(citiesData
-        .map(city => city.state)
-        .filter(state => state && state !== null && state !== undefined)
-      )].sort();
-      
-      setStates(uniqueStates);
-    } catch (error) {
-      console.error('Error fetching cities:', error);
-    }
-  }, []);
-
-  // Helper functions - Updated to handle both data.id and doc.id
-  const getCategoryInfo = useCallback((categoryId) => {
-    if (!categoryId) return { name: 'No Category', url: '' };
-    
-    const category = categories.find(cat => 
-      String(cat.id) === String(categoryId) || 
-      String(cat.docId) === String(categoryId)
-    );
-    
-    console.log(`Looking for category ID: ${categoryId}, found:`, category);
-    
-    return category ? {
-      name: category.name || `Category ID: ${categoryId}`,
-      url: category.url || ''
-    } : { name: `Category ID: ${categoryId}`, url: '' };
-  }, [categories]);
-
-  const getCityInfo = useCallback((cityId) => {
-    if (!cityId) return { name: 'No City', url: '', state: 'N/A' };
-    
-    const city = cities.find(c => 
-      String(c.id) === String(cityId) || 
-      String(c.docId) === String(cityId)
-    );
-    
-    console.log(`Looking for city ID: ${cityId}, found:`, city);
-    
-    return city ? {
-      name: city.name || `City ID: ${cityId}`,
-      url: city.url || '',
-      state: city.state || 'N/A'
-    } : { name: `City ID: ${cityId}`, url: '', state: 'N/A' };
-  }, [cities]);
-
-  const createPageUrl = useCallback((page) => {
-    const categoryInfo = getCategoryInfo(page.category_id);
-    const cityInfo = getCityInfo(page.city_id);
-    
-    if (cityInfo.url && categoryInfo.url) {
-      return `/${cityInfo.url}/${categoryInfo.url}`;
-    } else if (categoryInfo.url) {
-      return `/${categoryInfo.url}`;
-    } else if (cityInfo.url) {
-      return `/${cityInfo.url}`;
-    } else {
-      return page.page_url || '#';
-    }
-  }, [getCategoryInfo, getCityInfo]);
-
-  // Fetch all pages
-  const fetchAllActivePages = useCallback(async () => {
-    setLoading(true);
-    try {
-      // First try with ordering
-      let q;
-      try {
-        q = query(
-          collection(db, 'page_master_tb'),
-          orderBy('updated_at', 'desc')
-        );
-      } catch (orderError) {
-        console.log('Ordering failed, trying without order:', orderError);
-        q = query(collection(db, 'page_master_tb'));
-      }
-      
-      const snapshot = await getDocs(q);
-      const pagesData = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id, // Use document ID
-          docId: doc.id,
-          ...data
-        };
-      });
-      
-      console.log('Pages loaded:', pagesData.length);
-      console.log('Sample page data:', pagesData.slice(0, 2));
-      
-      setActivePages(pagesData);
-      setTotalCount(pagesData.length);
-    } catch (error) {
-      console.error('Error fetching pages:', error);
-    }
-    setLoading(false);
-  }, []);
-
-  // Apply filters to the data
-  const applyFilters = useCallback(() => {
-    let filtered = [...activePages];
-
-    console.log('Applying filters to', filtered.length, 'pages');
-
-    // Apply status filter first
-    if (statusFilter && statusFilter !== 'all') {
-      filtered = filtered.filter(page => {
-        const pageStatus = String(page.status || '0');
-        return pageStatus === String(statusFilter);
-      });
-      console.log('After status filter:', filtered.length);
-    }
-
-    // Apply category filter
-    if (categoryFilter && categoryFilter !== 'all') {
-      filtered = filtered.filter(page => {
-        const pageCategory = String(page.category_id || '');
-        const filterCategory = String(categoryFilter);
-        return pageCategory === filterCategory;
-      });
-      console.log('After category filter:', filtered.length);
-    }
-
-    // Apply state filter first (this will affect city options)
-    if (stateFilter && stateFilter !== 'all') {
-      const stateCities = cities.filter(city => city.state === stateFilter);
-      const stateCityIds = stateCities.map(city => String(city.id));
-      filtered = filtered.filter(page => {
-        const pageCityId = String(page.city_id || '');
-        return stateCityIds.includes(pageCityId);
-      });
-      console.log('After state filter:', filtered.length);
-    }
-
-    // Apply city filter
-    if (cityFilter && cityFilter !== 'all') {
-      filtered = filtered.filter(page => {
-        const pageCityId = String(page.city_id || '');
-        const filterCityId = String(cityFilter);
-        return pageCityId === filterCityId;
-      });
-      console.log('After city filter:', filtered.length);
-    }
-
-    // Apply search filter
-    if (searchTerm.trim()) {
-      const searchLower = searchTerm.toLowerCase().trim();
-      filtered = filtered.filter(page => {
-        const categoryInfo = getCategoryInfo(page.category_id);
-        const cityInfo = getCityInfo(page.city_id);
-        
-        const searchFields = [
-          page.page_title || '',
-          page.meta_title || '',
-          page.page_url || '',
-          page.meta_keywords || '',
-          categoryInfo.name || '',
-          cityInfo.name || '',
-          cityInfo.state || ''
-        ];
-        
-        return searchFields.some(field => 
-          field.toLowerCase().includes(searchLower)
-        );
-      });
-      console.log('After search filter:', filtered.length);
-    }
-
-    setFilteredPages(filtered);
-    setTotalPages(Math.ceil(filtered.length / ITEMS_PER_PAGE));
-    setCurrentPage(1); // Reset to first page when filters change
-  }, [activePages, statusFilter, categoryFilter, cityFilter, stateFilter, searchTerm, cities, getCategoryInfo, getCityInfo]);
-
-  // Get paginated data
-  const paginatedData = useMemo(() => {
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-    const endIndex = startIndex + ITEMS_PER_PAGE;
-    return filteredPages.slice(startIndex, endIndex);
-  }, [filteredPages, currentPage]);
-
-  // Get filtered cities based on selected state
-  const filteredCities = useMemo(() => {
-    if (stateFilter === 'all') return cities;
-    return cities.filter(city => city.state === stateFilter);
-  }, [cities, stateFilter]);
-
-  // Effects
+  // Trap scroll behind modal
   useEffect(() => {
-    const initializeData = async () => {
-      await Promise.all([
-        fetchCategories(),
-        fetchCities()
-      ]);
-      await fetchAllActivePages();
-    };
-    
-    initializeData();
-  }, [fetchCategories, fetchCities, fetchAllActivePages]);
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
 
-  useEffect(() => {
-    if (activePages.length > 0 && categories.length > 0 && cities.length > 0) {
-      applyFilters();
-    }
-  }, [applyFilters, activePages, categories, cities]);
-
-  // Event handlers
-  const handleFilterChange = (type, value) => {
-    if (type === 'category') {
-      setCategoryFilter(value);
-    } else if (type === 'city') {
-      setCityFilter(value);
-    } else if (type === 'state') {
-      setStateFilter(value);
-      // Reset city filter when state changes
-      if (value !== 'all') {
-        setCityFilter('all');
-      }
-    } else if (type === 'status') {
-      setStatusFilter(value);
-    }
-  };
-
-  const resetFilters = () => {
-    setSearchTerm('');
-    setCategoryFilter('all');
-    setCityFilter('all');
-    setStateFilter('all');
-    setStatusFilter('all');
-  };
-
-  const handlePageChange = (page) => {
-    if (page >= 1 && page <= totalPages && page !== currentPage) {
-      setCurrentPage(page);
-    }
-  };
-
-  const formatDate = (dateValue) => {
-    if (dateValue?.toDate) {
-      return dateValue.toDate().toLocaleDateString();
-    } else if (typeof dateValue === 'string') {
-      return new Date(dateValue).toLocaleDateString();
-    }
-    return 'N/A';
-  };
-
-  // Debug function
-  const debugData = () => {
-    console.log('=== DEBUG INFO ===');
-    console.log('Active Pages:', activePages.length);
-    console.log('Categories:', categories.length);
-    console.log('Cities:', cities.length);
-    console.log('Sample page:', activePages[0]);
-    console.log('Sample category:', categories[0]);
-    console.log('Sample city:', cities[0]);
-    
-    // Check for ID matching issues
-    if (activePages.length > 0) {
-      const samplePage = activePages[0];
-      console.log('Sample page category_id:', samplePage.category_id, typeof samplePage.category_id);
-      console.log('Sample page city_id:', samplePage.city_id, typeof samplePage.city_id);
-      
-      const categoryMatch = getCategoryInfo(samplePage.category_id);
-      const cityMatch = getCityInfo(samplePage.city_id);
-      
-      console.log('Category match:', categoryMatch);
-      console.log('City match:', cityMatch);
-    }
-  };
-
-  // Pagination component
-  const Pagination = () => {
-    const pages = [];
-    const maxVisible = 5;
-    let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
-    let end = Math.min(totalPages, start + maxVisible - 1);
-    
-    if (end - start + 1 < maxVisible) {
-      start = Math.max(1, end - maxVisible + 1);
-    }
-
-    for (let i = start; i <= end; i++) {
-      pages.push(i);
-    }
-
-    return (
-      <div className="flex items-center justify-between px-4 py-3 sm:px-6 border-t border-gray-200">
-        <div className="flex justify-between flex-1 sm:hidden">
-          <button
-            onClick={() => handlePageChange(currentPage - 1)}
-            disabled={currentPage === 1}
-            className="relative inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Previous
-          </button>
-          <button
-            onClick={() => handlePageChange(currentPage + 1)}
-            disabled={currentPage === totalPages}
-            className="relative ml-3 inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Next
-          </button>
-        </div>
-        <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm text-gray-700">
-              Showing <span className="font-medium">{((currentPage - 1) * ITEMS_PER_PAGE) + 1}</span> to{' '}
-              <span className="font-medium">{Math.min(currentPage * ITEMS_PER_PAGE, filteredPages.length)}</span> of{' '}
-              <span className="font-medium">{filteredPages.length}</span> results
-            </p>
-          </div>
-          <div>
-            <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
-              <button
-                onClick={() => handlePageChange(currentPage - 1)}
-                disabled={currentPage === 1}
-                className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Previous
-              </button>
-              {pages.map((page) => (
-                <button
-                  key={page}
-                  onClick={() => handlePageChange(page)}
-                  className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 ${
-                    currentPage === page
-                      ? 'bg-indigo-600 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600'
-                      : 'text-gray-900'
-                  }`}
-                >
-                  {page}
-                </button>
-              ))}
-              <button
-                onClick={() => handlePageChange(currentPage + 1)}
-                disabled={currentPage === totalPages}
-                className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next
-              </button>
-            </nav>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  const currentGroup = FIELD_GROUPS[activeTab];
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">Active Pages</h1>
-                <p className="text-sm text-gray-500 mt-1">
-                  Manage and monitor all pages across your platform
-                </p>
-              </div>
-              <div className="flex items-center space-x-3">
-                <button
-                  onClick={fetchAllActivePages}
-                  className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                >
-                  <RefreshIcon />
-                  <span className="ml-2">Refresh</span>
-                </button>
-                <button
-                  onClick={debugData}
-                  className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                >
-                  Debug Data
-                </button>
-                <div className="text-sm text-gray-500">
-                  Total: <span className="font-semibold text-gray-900">{totalCount}</span> |
-                  Filtered: <span className="font-semibold text-gray-900">{filteredPages.length}</span>
-                  {statusFilter !== 'all' && (
-                    <span className="ml-2 text-xs">
-                      (Status: {statusFilter === '1' ? 'Active' : 'Inactive'})
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.45)" }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+
+        {/* Modal header */}
+        <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900 truncate max-w-sm">
+              {page.page_title || "Untitled Page"}
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {categoryMap[String(page.category_id)] || "—"} · {cityMap[String(page.city_id)] || "—"} · doc: {page.docId}
+            </p>
           </div>
-
-          {/* Search and Filters */}
-          <div className="px-6 py-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
-              {/* Search */}
-              <div className="flex-1 max-w-lg">
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <SearchIcon />
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search pages, categories, cities..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              {/* Filter Toggle */}
-              <button
-                onClick={() => setShowFilters(!showFilters)}
-                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                <FilterIcon />
-                <span className="ml-2">Filters</span>
-                {(statusFilter !== 'all' || categoryFilter !== 'all' || cityFilter !== 'all' || stateFilter !== 'all') && (
-                  <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
-                    Active
-                  </span>
-                )}
-              </button>
-            </div>
-
-            {/* Expandable Filters */}
-            {showFilters && (
-              <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                    <select
-                      value={statusFilter}
-                      onChange={(e) => handleFilterChange('status', e.target.value)}
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                    >
-                      <option value="all">All Status</option>
-                      <option value="1">Active</option>
-                      <option value="0">Inactive</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                    <select
-                      value={categoryFilter}
-                      onChange={(e) => handleFilterChange('category', e.target.value)}
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                    >
-                      <option value="all">All Categories</option>
-                      {categories.map(category => (
-                        <option key={category.docId} value={category.id}>
-                          {category.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">State</label>
-                    <select
-                      value={stateFilter}
-                      onChange={(e) => handleFilterChange('state', e.target.value)}
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                    >
-                      <option value="all">All States</option>
-                      {states.map(state => (
-                        <option key={state} value={state}>
-                          {state}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
-                    <select
-                      value={cityFilter}
-                      onChange={(e) => handleFilterChange('city', e.target.value)}
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                    >
-                      <option value="all">All Cities</option>
-                      {filteredCities.map(city => (
-                        <option key={city.docId} value={city.id}>
-                          {city.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="flex items-end">
-                    <button
-                      onClick={resetFilters}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                    >
-                      Reset Filters
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <button onClick={onClose} className="ml-4 text-gray-400 hover:text-gray-600 flex-shrink-0">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
 
-        {/* Content */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="flex items-center space-x-3">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-                <span className="text-gray-600">Loading pages...</span>
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* Table */}
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Page Details
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        URL
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Location
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Category
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Created
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {paginatedData.map((page) => {
-                      const categoryInfo = getCategoryInfo(page.category_id);
-                      const cityInfo = getCityInfo(page.city_id);
-                      const pageUrl = createPageUrl(page);
+        {/* Tabs */}
+        <div className="flex gap-1 px-6 pt-3 pb-0 border-b border-gray-200 overflow-x-auto flex-shrink-0">
+          {FIELD_GROUPS.map((g, i) => (
+            <button
+              key={g.label}
+              onClick={() => setActiveTab(i)}
+              className={`px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
+                activeTab === i
+                  ? "border-indigo-600 text-indigo-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {g.label}
+            </button>
+          ))}
+        </div>
 
-                      return (
-                        <tr key={page.id} className="hover:bg-gray-50">
-                          <td className="px-6 py-4">
-                            <div className="flex items-start space-x-3">
-                              <div className="flex-shrink-0">
-                                <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-                                  <span className="text-indigo-600 font-semibold text-sm">
-                                    {(page.page_title || 'P')[0].toUpperCase()}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-gray-900 truncate">
-                                  {page.page_title || 'Untitled Page'}
-                                </p>
-                                <p className="text-sm text-gray-500 truncate">
-                                  {page.meta_title || 'No meta title'}
-                                </p>
-                                <div className="mt-1">
-                                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                    page.status === '1' || page.status === 1
-                                      ? 'bg-green-100 text-green-800'
-                                      : 'bg-red-100 text-red-800'
-                                  }`}>
-                                    {page.status === '1' || page.status === 1 ? 'Active' : 'Inactive'}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="text-sm">
-                              <a
-                                href={pageUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-indigo-600 hover:text-indigo-900 flex items-center space-x-1 group"
-                              >
-                                <span className="truncate max-w-xs">{pageUrl}</span>
-                                <ExternalLinkIcon />
-                              </a>
-                              {page.page_url && (
-                                <p className="text-xs text-gray-500 mt-1">
-                                  Original: {page.page_url}
-                                </p>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="text-sm">
-                              <p className="font-medium text-gray-900">{cityInfo.name}</p>
-                              <p className="text-gray-500">{cityInfo.state}</p>
-                              <p className="text-xs text-gray-400">ID: {page.city_id}</p>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="text-sm">
-                              <p className="font-medium text-gray-900">{categoryInfo.name}</p>
-                              <p className="text-xs text-gray-400">ID: {page.category_id}</p>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-500">
-                            {formatDate(page.createdAt || page.updated_at)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+        {/* Fields */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {currentGroup.fields.map(({ key, label, type, readOnly, options }) => (
+            <div key={key}>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                {label}
+                {readOnly && <span className="ml-1 text-gray-400 font-normal">(read-only)</span>}
+              </label>
 
-              {/* No Results */}
-              {filteredPages.length === 0 && !loading && (
-                <div className="text-center py-12">
-                  <div className="mx-auto max-w-md">
-                    <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <h3 className="mt-4 text-lg font-medium text-gray-900">No pages found</h3>
-                    <p className="mt-2 text-sm text-gray-500">
-                      No pages match your current search and filter criteria.
-                    </p>
-                    {(searchTerm || statusFilter !== 'all' || categoryFilter !== 'all' || cityFilter !== 'all' || stateFilter !== 'all') && (
-                      <button
-                        onClick={resetFilters}
-                        className="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-indigo-700 bg-indigo-100 hover:bg-indigo-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                      >
-                        Clear all filters
-                      </button>
-                    )}
-                  </div>
-                </div>
+              {type === "select" ? (
+                <select
+                  value={form[key] ?? ""}
+                  onChange={(e) => set(key, e.target.value)}
+                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  {options.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              ) : type === "textarea" ? (
+                <textarea
+                  value={form[key] ?? ""}
+                  onChange={(e) => set(key, e.target.value)}
+                  readOnly={readOnly}
+                  rows={3}
+                  className={`w-full text-sm border border-gray-300 rounded-md px-3 py-2 resize-y focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
+                    readOnly ? "bg-gray-50 text-gray-400 cursor-not-allowed" : "bg-white text-gray-800"
+                  }`}
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={form[key] ?? ""}
+                  onChange={(e) => set(key, e.target.value)}
+                  readOnly={readOnly}
+                  className={`w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
+                    readOnly ? "bg-gray-50 text-gray-400 cursor-not-allowed" : "bg-white text-gray-800"
+                  }`}
+                />
               )}
+            </div>
+          ))}
+        </div>
 
-              {/* Pagination */}
-              {filteredPages.length > 0 && totalPages > 1 && <Pagination />}
-            </>
+        {/* Footer */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 flex-shrink-0">
+          {saveError ? (
+            <p className="text-xs text-red-500 flex-1 mr-4">{saveError}</p>
+          ) : saved ? (
+            <p className="text-xs text-green-600 flex-1 mr-4">✓ Saved successfully</p>
+          ) : (
+            <p className="text-xs text-gray-400 flex-1 mr-4">
+              Tab through sections · read-only fields are not saved
+            </p>
           )}
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+            >
+              Close
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
-};
+}
 
-export default ActivePagesManager;
+// ── Main table component ──────────────────────────────────────────────────────
+export default function PageMasterTable() {
+  const [pages, setPages] = useState([]);
+  const [totalCount, setTotalCount] = useState(null);
+  const [categoryMap, setCategoryMap] = useState({});
+  const [cityMap, setCityMap] = useState({});
+  const [categories, setCategories] = useState([]);
+  const [cities, setCities] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const cursors = useRef([undefined]);
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [cityFilter, setCityFilter] = useState("all");
+  const [loading, setLoading] = useState(true);
+  const [pageLoading, setPageLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Edit modal
+  const [editingPage, setEditingPage] = useState(null);
+
+  // ── Meta fetch ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const fetchMeta = async () => {
+      try {
+        const [catSnap, citySnap] = await Promise.all([
+          getDocs(collection(db, "category_manage")),
+          getDocs(collection(db, "city_tb")),
+        ]);
+        const catMap = {}, catList = [];
+        catSnap.docs.forEach((d) => {
+          const data = d.data();
+          const id = String(data.id || d.id);
+          catMap[id] = data.category_name || "—";
+          if (data.status === "1" || data.status === 1)
+            catList.push({ id, name: data.category_name || "Unnamed" });
+        });
+        catList.sort((a, b) => a.name.localeCompare(b.name));
+
+        const ctyMap = {}, cityList = [];
+        citySnap.docs.forEach((d) => {
+          const data = d.data();
+          const id = String(data.id || d.id);
+          ctyMap[id] = data.city_name || "—";
+          if (data.status === "1" || data.status === 1)
+            cityList.push({ id, name: data.city_name || "Unnamed" });
+        });
+        cityList.sort((a, b) => a.name.localeCompare(b.name));
+
+        setCategoryMap(catMap); setCityMap(ctyMap);
+        setCategories(catList); setCities(cityList);
+      } catch (err) { console.error("Meta fetch error:", err); }
+    };
+    fetchMeta();
+  }, []);
+
+  // ── Query builder ───────────────────────────────────────────────────
+  const buildQuery = (cursor) => {
+    const constraints = [orderBy("updated_at", "desc"), limit(PAGE_SIZE)];
+    if (categoryFilter !== "all") constraints.unshift(where("category_id", "==", categoryFilter));
+    if (cityFilter !== "all") constraints.unshift(where("city_id", "==", cityFilter));
+    if (cursor) constraints.push(startAfter(cursor));
+    return query(collection(db, "page_master_tb"), ...constraints);
+  };
+
+  const fetchCount = async () => {
+    try {
+      const constraints = [];
+      if (categoryFilter !== "all") constraints.push(where("category_id", "==", categoryFilter));
+      if (cityFilter !== "all") constraints.push(where("city_id", "==", cityFilter));
+      const snap = await getCountFromServer(query(collection(db, "page_master_tb"), ...constraints));
+      setTotalCount(snap.data().count);
+    } catch { setTotalCount(null); }
+  };
+
+  const fetchPage = async (pageNum) => {
+    pageNum === 1 ? setLoading(true) : setPageLoading(true);
+    try {
+      const cursor = cursors.current[pageNum - 1];
+      const snapshot = await getDocs(buildQuery(cursor));
+      const data = snapshot.docs.map((d) => ({ docId: d.id, ...d.data() }));
+      if (snapshot.docs.length === PAGE_SIZE)
+        cursors.current[pageNum] = snapshot.docs[snapshot.docs.length - 1];
+      setPages(data);
+      setCurrentPage(pageNum);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); setPageLoading(false); }
+  };
+
+  useEffect(() => {
+    cursors.current = [undefined];
+    setCurrentPage(1);
+    setTotalCount(null);
+    fetchPage(1);
+    fetchCount();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryFilter, cityFilter]);
+
+  const totalPages = totalCount !== null ? Math.ceil(totalCount / PAGE_SIZE) : null;
+  const hasNext = pages.length === PAGE_SIZE;
+  const hasPrev = currentPage > 1;
+  const hasFilters = categoryFilter !== "all" || cityFilter !== "all";
+
+  const formatDate = (val) => {
+    if (!val) return "—";
+    if (val?.toDate) return val.toDate().toLocaleDateString("en-IN");
+    if (typeof val === "string") return val.slice(0, 10);
+    return "—";
+  };
+  const isActive = (s) => s === "1" || s === 1;
+
+  // Update the row in place after save (no refetch needed)
+  const handleSaved = (updatedPage) => {
+    setPages((prev) => prev.map((p) => p.docId === updatedPage.docId ? updatedPage : p));
+  };
+
+  const startItem = (currentPage - 1) * PAGE_SIZE + 1;
+  const endItem = startItem + pages.length - 1;
+
+  if (loading) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="flex items-center gap-3 text-gray-500">
+        <div className="w-5 h-5 border-2 border-gray-300 border-t-indigo-600 rounded-full animate-spin" />
+        <span className="text-sm">Loading…</span>
+      </div>
+    </div>
+  );
+
+  if (error) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="bg-white border border-red-200 rounded-lg p-6 max-w-md text-center">
+        <p className="text-red-600 font-medium text-sm">Failed to load</p>
+        <p className="text-gray-400 text-xs mt-1">{error}</p>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {editingPage && (
+        <EditModal
+          page={editingPage}
+          categoryMap={categoryMap}
+          cityMap={cityMap}
+          onClose={() => setEditingPage(null)}
+          onSaved={handleSaved}
+        />
+      )}
+
+      <div className="min-h-screen bg-gray-50 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+
+          {/* Header */}
+          <div className="mb-6 flex items-start justify-between flex-wrap gap-4">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Pages</h1>
+              <p className="text-sm text-gray-500 mt-1">
+                {totalCount !== null ? `${totalCount.toLocaleString()} total records` : "Counting…"}
+                {hasFilters && " (filtered)"}
+              </p>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}
+                className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                <option value="all">All Categories</option>
+                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <select value={cityFilter} onChange={(e) => setCityFilter(e.target.value)}
+                className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                <option value="all">All Cities</option>
+                {cities.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {hasFilters && (
+                <button onClick={() => { setCategoryFilter("all"); setCityFilter("all"); }}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 underline">Clear</button>
+              )}
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+            <div className={`overflow-x-auto transition-opacity duration-150 ${pageLoading ? "opacity-50" : "opacity-100"}`}>
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-8">#</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Page Title</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Meta Title</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">City</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Updated</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {pages.map((page, i) => (
+                    <tr key={page.docId} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-gray-400 text-xs">{startItem + i}</td>
+                      <td className="px-4 py-3 max-w-xs">
+                        <p className="font-medium text-gray-900 truncate">
+                          {page.page_title || <span className="text-gray-400 italic">Untitled</span>}
+                        </p>
+                        {page.id && <p className="text-xs text-gray-400 mt-0.5">ID: {page.id}</p>}
+                      </td>
+                      <td className="px-4 py-3 max-w-xs">
+                        <p className="text-gray-600 truncate">
+                          {page.meta_title || <span className="text-gray-400 italic">—</span>}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="text-gray-800 font-medium">
+                          {categoryMap[String(page.category_id)] || <span className="text-gray-400 italic">—</span>}
+                        </p>
+                        <p className="text-xs text-gray-400">ID: {page.category_id || "—"}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="text-gray-800 font-medium">
+                          {cityMap[String(page.city_id)] || <span className="text-gray-400 italic">—</span>}
+                        </p>
+                        <p className="text-xs text-gray-400">ID: {page.city_id || "—"}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                          isActive(page.status) ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+                        }`}>
+                          {isActive(page.status) ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
+                        {formatDate(page.updated_at)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => setEditingPage(page)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-indigo-600 border border-indigo-200 rounded-md hover:bg-indigo-50 transition-colors"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {pages.length === 0 && (
+              <div className="py-16 text-center text-gray-400 text-sm">
+                {hasFilters ? "No pages match the selected filters." : "No records found."}
+              </div>
+            )}
+
+            {/* Pagination */}
+            <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+              <p className="text-xs text-gray-500">
+                {pages.length > 0
+                  ? `Showing ${startItem}–${endItem}${totalCount !== null ? ` of ${totalCount.toLocaleString()}` : ""}`
+                  : "No results"}
+              </p>
+              <div className="flex items-center gap-2">
+                <button onClick={() => { if (hasPrev && !pageLoading) fetchPage(currentPage - 1); }}
+                  disabled={!hasPrev || pageLoading}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Prev
+                </button>
+                <span className="text-xs text-gray-500 px-1">
+                  Page {currentPage}{totalPages ? ` of ${totalPages.toLocaleString()}` : ""}
+                </span>
+                <button onClick={() => { if (hasNext && !pageLoading) fetchPage(currentPage + 1); }}
+                  disabled={!hasNext || pageLoading}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                  Next
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+                {pageLoading && <div className="w-4 h-4 border-2 border-gray-300 border-t-indigo-600 rounded-full animate-spin ml-1" />}
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </>
+  );
+}
