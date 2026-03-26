@@ -10,7 +10,7 @@ import {
   deleteDoc, 
   runTransaction 
 } from "firebase/firestore";
-import { db, storage } from '../../../firebase/config';
+import { db } from '../../../firebase/config';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
