@@ -448,7 +448,7 @@ export default function AddBlogPage() {
                     </p>
                   )}
                   <p className="text-xs text-gray-500 mt-1">
-                    Recommended: 1200x630px (PNG, JPG, WebP)
+                  {`  Recommended: 1200x630px (PNG, JPG, WebP)`}
                   </p>
                 </div>
 
@@ -471,7 +471,7 @@ export default function AddBlogPage() {
                 <label htmlFor="blog_description" className="block text-sm font-medium text-gray-700 mb-2">
                   Blog Content *
                   <span className="text-xs text-gray-500 ml-2">
-                    ({formData.blog_description ? formData.blog_description.length : 0} characters)
+                    {`(${formData.blog_description ? formData.blog_description.length : 0} characters)`}
                   </span>
                 </label>
                 <BlogEditor 
@@ -480,7 +480,7 @@ export default function AddBlogPage() {
                 />
                 {formData.blog_description && (
                   <div className="mt-2 text-xs text-gray-500">
-                    Word count: {getWordCount()} | Estimated reading time: {getReadingTime()} minutes
+                    {`Word count: ${getWordCount()} | Estimated reading time: ${getReadingTime()} minutes`}
                   </div>
                 )}
               </div>
@@ -503,7 +503,7 @@ export default function AddBlogPage() {
                       placeholder="Auto-generated from blog title"
                     />
                     <p className="text-xs text-gray-500 mt-1">
-                      {formData.meta_title.length}/60 characters (recommended)
+                      {`${formData.meta_title.length}/60 characters (recommended)`}
                     </p>
                   </div>
 
@@ -536,7 +536,7 @@ export default function AddBlogPage() {
                       placeholder="Auto-generated from content. Edit to customize."
                     />
                     <p className="text-xs text-gray-500 mt-1">
-                      {formData.meta_description.length}/160 characters (recommended)
+                      {`${formData.meta_description.length}/160 characters (recommended)`}
                     </p>
                   </div>
 

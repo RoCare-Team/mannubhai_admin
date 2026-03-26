@@ -252,7 +252,9 @@ export default function BlogPage() {
               </div>
               <div className="ml-4">
                 <p className="text-green-100">Published</p>
-                <p className="text-2xl font-bold">{blogs.filter(blog => blog.status === 'active').length}</p>
+                <p className="text-2xl font-bold">
+                  {blogs.filter(blog => blog.status === 'active').length}
+                </p>
               </div>
             </div>
           </div>
