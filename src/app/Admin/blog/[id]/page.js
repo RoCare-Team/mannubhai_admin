@@ -228,7 +228,7 @@ export default function EditBlogPage() {
             <div>
               <h1 className="text-2xl font-semibold text-gray-900">Edit Blog</h1>
               <p className="text-sm text-gray-600 mt-1">
-                Last updated: {new Date(formData.updated_at).toLocaleString()}
+                Last updated: {`${new Date(formData.updated_at).toLocaleString()}`}
               </p>
             </div>
             <div className="flex items-center gap-2">
